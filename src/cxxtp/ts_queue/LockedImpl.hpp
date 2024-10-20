@@ -8,9 +8,9 @@ namespace cxxtp::ts_queue {
 template<class Elem, unsigned maxSize>
 class LockedImpl {
 public:
-  std::optional<Elem> try_pop(); // has value -> success
-  std::optional<Elem> try_push(Elem&& o); // has value -> failed
-  bool try_push(Elem& o);
+  std::optional<Elem> tryPop(); // has value -> success
+  std::optional<Elem> tryPush(Elem&& o); // has value -> failed
+  bool tryPush(Elem& o);
   
 private:
   std::mutex _mux;
@@ -18,7 +18,7 @@ private:
 };
 
 template<class Elem, unsigned maxSize>
-std::optional<Elem> LockedImpl<Elem, maxSize>::try_pop() {
+std::optional<Elem> LockedImpl<Elem, maxSize>::tryPop() {
   std::unique_lock<std::mutex> lock(_mux, std::try_to_lock);
   if (!lock.owns_lock())
     return std::nullopt;
@@ -30,7 +30,7 @@ std::optional<Elem> LockedImpl<Elem, maxSize>::try_pop() {
 }
   
 template<class Elem, unsigned maxSize>
-std::optional<Elem> LockedImpl<Elem, maxSize>::try_push(Elem&& obj) {
+std::optional<Elem> LockedImpl<Elem, maxSize>::tryPush(Elem&& obj) {
   std::unique_lock<std::mutex> lock(_mux, std::try_to_lock);
   if (!lock.owns_lock())
     return {std::move(obj)};
@@ -41,7 +41,7 @@ std::optional<Elem> LockedImpl<Elem, maxSize>::try_push(Elem&& obj) {
 }
   
 template<class Elem, unsigned maxSize>
-bool LockedImpl<Elem, maxSize>::try_push(Elem& obj) {
+bool LockedImpl<Elem, maxSize>::tryPush(Elem& obj) {
   std::unique_lock<std::mutex> lock(_mux, std::try_to_lock);
   if (!lock.owns_lock())
     return false;

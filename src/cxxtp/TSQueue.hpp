@@ -3,8 +3,7 @@
 
 namespace cxxtp {
 
-template<class Elem, unsigned maxSize>
-class TSQueue : public ts_queue::LockedImpl<Elem, maxSize> {
-};
+template <class Elem, unsigned maxSize>
+class TSQueue : public ts_queue::LockedImpl<Elem, maxSize> {};
 
 } // namespace cxxtp

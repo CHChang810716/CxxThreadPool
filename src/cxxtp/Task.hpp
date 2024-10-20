@@ -4,5 +4,5 @@
 namespace cxxtp {
 
 using Task = std::function<void(void)>;
-    
+
 } // namespace cxxtp

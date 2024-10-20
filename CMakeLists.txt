@@ -23,6 +23,7 @@ option(BUILD_TEST   "Build project with test"   OFF)
 option(INSTALL_DEPS "Install dependensies"      OFF)
 
 include(cmake/packages.cmake)
+include(cmake/compile.cmake)
 include(cmake/src.cmake)
 include(cmake/ide.cmake)
 include(cmake/install.cmake)

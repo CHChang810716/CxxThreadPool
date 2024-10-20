@@ -14,22 +14,45 @@ Scheduler::Scheduler(unsigned numThreads)
 
 Worker *Scheduler::_getNextWorker() {
   assert(_mainId == std::this_thread::get_id());
-  if (_nextAllocWorker == _workers.end())
+  if (_nextAllocWorker == _workers.end()) {
     _nextAllocWorker = _workers.begin();
+    return nullptr;
+  }
   auto res = _nextAllocWorker->second;
   _nextAllocWorker++;
   return res;
 }
 
+bool Scheduler::_tryAllocBufTaskToNextWorker(Task &task) {
+  for (unsigned i = 0; i < _workers.size() + 1; ++i) {
+    Worker *selected = _getNextWorker();
+    if (selected) {
+      if (selected->trySubmit(task))
+        return true;
+      else
+        continue;
+    } else {
+      if (_selfTasks.tryPush(task))
+        return true;
+      else
+        continue;
+    }
+  }
+  return false;
+}
+
 bool Scheduler::_tryAllocTasksToWorkers() {
   assert(_mainId == std::this_thread::get_id());
+  std::unique_lock<std::mutex> lock(_mux, std::try_to_lock);
+  if (!lock.owns_lock())
+    return false;
   while (!_buffer.empty()) {
     auto &task = _buffer.front();
-    Worker *selected = _getNextWorker();
-    while (!selected->trySubmit(task)) {
-      selected = _getNextWorker();
+    if (_tryAllocBufTaskToNextWorker(task)) {
+      _buffer.pop();
+      continue;
     }
-    _buffer.pop();
+    return false;
   }
   return true;
 }

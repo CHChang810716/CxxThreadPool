@@ -80,6 +80,7 @@ private:
   bool _tryAllocTasksToWorkers();
   void _schedulerOnce();
   Worker *_getNextWorker();
+  bool _tryAllocBufTaskToNextWorker(Task &task);
   WorkerMap _workers;
   std::mutex _mux;
   std::queue<Task> _buffer;

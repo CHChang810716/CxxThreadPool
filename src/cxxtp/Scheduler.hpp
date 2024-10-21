@@ -22,10 +22,15 @@ public:
     using PromisePtr = std::shared_ptr<Promise>;
     PromisePtr p(new Promise());
     auto fut = p->get_future();
-    _buffer.emplace([this, p, ff{std::move(f)}]() {
+    Task task = [this, p, ff{std::move(f)}]() {
       auto res = ff(*this);
       p->set_value(res);
-    });
+    };
+    if (std::this_thread::get_id() == _mainId) {
+      while(!_tryAllocBufTaskToNextWorker(task));
+    } else {
+      _buffer.emplace(std::move(task));
+    }
     return fut;
   }
 
@@ -74,7 +79,9 @@ public:
       yield();
     }
   }
-
+  unsigned getNumPendingTasks() const {
+    return _selfTasks.size() + _numStackLevel;
+  }
 private:
   using WorkerMap = std::map<std::thread::id, Worker *>;
   bool _tryAllocTasksToWorkers();
@@ -87,6 +94,7 @@ private:
   TSQueue<Task, MAX_WORKER_TASKS> _selfTasks;
   std::thread::id _mainId;
   WorkerMap::iterator _nextAllocWorker;
+  unsigned _numStackLevel;
 };
 
 } // namespace cxxtp

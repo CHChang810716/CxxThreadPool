@@ -1,10 +1,16 @@
 #include "cxxtp/Scheduler.hpp"
+
 #include <mutex>
 namespace cxxtp {
 
 Scheduler::Scheduler(unsigned numThreads)
-    : _workers(), _mux(), _buffer(), _selfTasks(),
-      _mainId(std::this_thread::get_id()), _nextAllocWorker() {
+    : _workers(),
+      _mux(),
+      _buffer(),
+      _selfTasks(),
+      _mainId(std::this_thread::get_id()),
+      _nextAllocWorker(),
+      _numStackLevel(0) {
   for (unsigned i = 0; i < numThreads - 1; ++i) {
     Worker *worker = new Worker(*this);
     _workers[worker->getThreadId()] = worker;
@@ -24,6 +30,26 @@ Worker *Scheduler::_getNextWorker() {
 }
 
 bool Scheduler::_tryAllocBufTaskToNextWorker(Task &task) {
+  Worker *minTasksWorker = nullptr;
+  // Try assign task to the most leisurely worker.
+  for (auto &[tid, worker] : _workers) {
+    if (!minTasksWorker) {
+      minTasksWorker = worker;
+      continue;
+    }
+    minTasksWorker =
+        worker->getNumPendingTasks() < minTasksWorker->getNumPendingTasks()
+            ? worker
+            : minTasksWorker;
+  }
+  if (minTasksWorker && minTasksWorker->getNumPendingTasks() < getNumPendingTasks()) {
+    if (minTasksWorker->trySubmit(task))
+      return true;
+  } else {
+    if (_selfTasks.tryPush(task))
+      return true;
+  }
+  // Failed, try to find any workable worker.
   for (unsigned i = 0; i < _workers.size() + 1; ++i) {
     Worker *selected = _getNextWorker();
     if (selected) {
@@ -44,8 +70,7 @@ bool Scheduler::_tryAllocBufTaskToNextWorker(Task &task) {
 bool Scheduler::_tryAllocTasksToWorkers() {
   assert(_mainId == std::this_thread::get_id());
   std::unique_lock<std::mutex> lock(_mux, std::try_to_lock);
-  if (!lock.owns_lock())
-    return false;
+  if (!lock.owns_lock()) return false;
   while (!_buffer.empty()) {
     auto &task = _buffer.front();
     if (_tryAllocBufTaskToNextWorker(task)) {
@@ -61,7 +86,9 @@ void Scheduler::_schedulerOnce() {
   assert(_mainId == std::this_thread::get_id());
   _tryAllocTasksToWorkers();
   if (auto task = _selfTasks.tryPop(); task.has_value()) {
+    ++_numStackLevel;
     task.value()();
+    --_numStackLevel;
   }
 }
 
@@ -71,4 +98,4 @@ Scheduler::~Scheduler() {
     delete worker;
   }
 }
-} // namespace cxxtp
+}  // namespace cxxtp

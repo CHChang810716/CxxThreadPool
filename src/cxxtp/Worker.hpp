@@ -1,9 +1,10 @@
 #pragma once
-#include "cxxtp/TSQueue.hpp"
-#include "cxxtp/Task.hpp"
 #include <atomic>
 #include <functional>
 #include <thread>
+
+#include "cxxtp/TSQueue.hpp"
+#include "cxxtp/Task.hpp"
 
 namespace cxxtp {
 
@@ -16,19 +17,21 @@ class Scheduler;
 class Worker {
   friend Scheduler;
 
-public:
+ public:
   Worker(Scheduler &sched);
   bool trySubmit(Task &t);
-  std::thread::id getThreadId() { return _t.get_id(); }
-  void detach(); 
+  std::thread::id getThreadId() const { return _t.get_id(); }
+  void detach();
+  size_t getNumPendingTasks() const { return _numStaskTasks + _queue.size(); }
 
-private:
+ private:
   void _workerOnce();
   void _workerLoop();
   std::atomic<bool> _enabled;
   std::thread _t;
   TSQueue<Task, MAX_WORKER_TASKS> _queue;
   Scheduler *_scheduler;
+  unsigned _numStaskTasks;
 };
 
-} // namespace cxxtp
+}  // namespace cxxtp

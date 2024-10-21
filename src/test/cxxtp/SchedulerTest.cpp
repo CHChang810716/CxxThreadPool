@@ -104,3 +104,33 @@ TEST(Scheduler, block_test) {
   EXPECT_TRUE(du > 10s);
   EXPECT_TRUE(du < 12s);
 }
+
+int fib(int n) {
+  if( n < 2 ) return n;
+  else return fib(n - 1) + fib( n - 2 );
+}
+
+int pfib(cxxtp::Scheduler& sched, int n) {
+  if (n <= 32)
+    return fib(n);
+  auto leftFut = sched.async([&](auto& api){
+    return pfib(sched, n - 1);
+  });
+  auto rightFut = sched.async([&](auto& api){
+    return pfib(sched, n - 2);
+  });
+  return sched.await(leftFut) + sched.await(rightFut);
+}
+TEST(Scheduler, recursive_await_test) {
+  auto start = std::chrono::steady_clock::now();
+  auto stRes = fib(48);
+  auto duST = std::chrono::steady_clock::now() - start;
+
+  cxxtp::Scheduler sched(4);
+  start = std::chrono::steady_clock::now();
+  auto mtRes = pfib(sched, 48);
+  auto duMT = std::chrono::steady_clock::now() - start;
+  EXPECT_EQ(mtRes, stRes);
+  EXPECT_TRUE(duST * 0.25 <= duMT);
+  EXPECT_TRUE(duST * 0.3 > duMT);
+}

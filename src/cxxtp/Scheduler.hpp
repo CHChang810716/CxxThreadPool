@@ -11,83 +11,39 @@
 #include "cxxtp/TSQueue.hpp"
 #include "cxxtp/Task.hpp"
 #include "cxxtp/Worker.hpp"
+#include "cxxtp/ContextList.hpp"
 
 namespace cxxtp {
 class Scheduler {
  public:
   Scheduler(unsigned numThreads);
   ~Scheduler();
-  template <class Func>
-  auto async(Func &&f) {
+
+  template <class FuncCtx>
+  auto async(FuncCtx &&fctx) {
+    // 0-0. the return type of f should be coroutine
+    // 0-1. the promise of coroutine type should have constructor to
+    // capture the Scheduler
+    // 1. put the f to a list member of Scheduler
+    // 2. call the f from the list, a coroutine object returned -> co
+    // 3. put co to queue
+    // 4. in worker, pop queue and call co.resume()
+    // 5. when resume finish, check co status
+    //  if co is finished, call co.destroy() and destroy the related f in
+    //  Scheduler list otherwise, reschedule the co:
+    //  Scheduler._async_co(co)
     std::lock_guard<std::mutex> lock(_mux);
-    using Res = decltype(f(*this));
-    using Promise = std::promise<Res>;
-    using PromisePtr = std::shared_ptr<Promise>;
-    PromisePtr p(new Promise());
-    auto fut = p->get_future();
-    Task task = [this, p, ff{std::move(f)}]() {
-      if constexpr (std::is_void_v<Res>) {
-        ff(*this);
-        p->set_value();
-      } else {
-        p->set_value(ff(*this));
-      }
-    };
+    auto *pfctx = _liveContexts.append(std::forward<FuncCtx>(fctx));
+    auto coroTask = pfctx->operator()(*this);
+    auto fut = coroTask.getFuture();
     if (std::this_thread::get_id() == _mainId) {
-      while (!_tryAllocBufTaskToNextWorker(task))
+      while (!_tryAllocBufTaskToNextWorker(coroTask))
         ;
     } else {
-      _buffer.emplace(std::move(task));
+      _buffer.emplace(std::move(coroTask));
     }
     return fut;
   }
-
-  template <class T>
-  auto await(std::future<T> &fut) {
-    _only_await(fut);
-    return fut.get();
-  }
-
-  void yield() {
-    auto myid = std::this_thread::get_id();
-    auto iter = _workers.find(myid);
-    if (iter == _workers.end()) {
-      if (_mainId == myid) {
-        _schedulerOnce();
-      }
-    } else {
-      iter->second->_workerOnce();
-    }
-  }
-
-  template <class... DuArgs>
-  void yield_for(std::chrono::duration<DuArgs...> du) {
-    auto start = std::chrono::steady_clock::now();
-    while ((start + du) > std::chrono::steady_clock::now()) {
-      yield();
-    }
-  }
-
-  // template <class T>
-  // std::list<T> await(FutureSet<T> &futSet) {
-  //   std::list<T> res;
-  //   auto &futs = futSet._data;
-  //   for (; !futs.empty(); futs.pop_front()) {
-  //     auto &fut = futs.front();
-  //     _only_await(fut);
-  //     res.push_back(fut.get());
-  //   }
-  //   return res;
-  // }
-
-  // void await(FutureSet<void> &futSet);
-
-  // template <class... T>
-  // std::tuple<T...> await(FutureTuple<T...> &futSet) {
-  //   return std::apply(
-  //       [&](auto &... fut) { return std::make_tuple(await(fut)...); },
-  //       futSet);
-  // }
 
   unsigned getNumPendingTasks() const {
     return _selfTasks.size() + _numStackLevel;
@@ -131,6 +87,7 @@ class Scheduler {
   std::thread::id _mainId;
   WorkerMap::iterator _nextAllocWorker;
   unsigned _numStackLevel;
+  ContextList _liveContexts;
 };
 
 }  // namespace cxxtp

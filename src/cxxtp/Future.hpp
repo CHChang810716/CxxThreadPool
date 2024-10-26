@@ -1,33 +1,39 @@
 #pragma once
+#include <cassert>
 #include <coroutine>
 #include <functional>
 #include <future>
-#include <cassert>
+#include <type_traits>
+
+#include "cxxtp/Task.hpp"
 
 namespace cxxtp {
-class Scheduler;
 
 template <class T>
-struct PromiseStorage {
+concept SchedulerProxy = requires(T a, Task task) {
+  {a.deleteFuncCtx()};
+  {a.sched(task)};
+};
+
+template <class T>
+struct PromiseBase {
+  void return_value(T &&v) { value = std::forward<T>(v); }
   T value;
 };
 
 template <>
-struct PromiseStorage<void> {};
-
-template<class T>
-concept SchedulerProxy = requires(T a, std::coroutine_handle<> co) {
-  { a.deleteFuncCtx() };
-  { a.sched(co) };
+struct PromiseBase<void> {
+  void return_void() {}
 };
 
 template <class T, SchedulerProxy SchedulerAgent>
 class Future {
  public:
-  struct promise_type : public PromiseStorage<T> {
+  struct promise_type : public PromiseBase<T> {
     // TODO: operator new for memory efficiency
     // constructor forwarding https://godbolt.org/z/T59dcebPM
-    promise_type(SchedulerAgent &sa) : _schedulerAgent(&sa) {}
+    template<class... Args>
+    promise_type(SchedulerAgent &sa, Args&&... args) : _schedulerAgent(&sa) {}
 
     Future<T, SchedulerAgent> get_return_object() {
       return Future<T, SchedulerAgent>{Handle::from_promise(*this),
@@ -36,10 +42,6 @@ class Future {
 
     std::suspend_always initial_suspend() noexcept { return {}; }
     std::suspend_always final_suspend() noexcept { return {}; }
-    void return_void() requires(std::is_void_v<T>) {}
-    void return_value(T &&v) requires(!std::is_void_v<T>) {
-      PromiseStorage<T>::value = std::forward<T>(v);
-    }
     void unhandled_exception() {
       // TODO: need handle this
     }
@@ -60,20 +62,26 @@ class Future {
     if (_schedulerAgent) _schedulerAgent->deleteFuncCtx();
   }
 
-  bool await_ready() {
-    return _internal.done();
-  }
+  bool await_ready() { return _internal.done(); }
 
   void await_suspend(std::coroutine_handle<> caller) {
-    _schedulerAgent->sched(caller);
+    _schedulerAgent->sched([caller, this]() {
+      if (_internal.done())
+        caller.resume();
+      else
+        await_suspend(caller);
+    });
   }
 
-  T &await_resume() {
+  auto &&await_resume() {
     assert(_internal.done());
-    if constexpr(!std::is_void_v<T>) {
+    if constexpr (!std::is_void_v<T>) {
       return _internal.promise().value;
     }
   }
+
+  std::coroutine_handle<> getCoroutineHandle() const { return _internal; }
+
  private:
   Handle _internal;
   SchedulerAgent *_schedulerAgent;

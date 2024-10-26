@@ -16,7 +16,7 @@ class LockedImpl {
  private:
   std::mutex _mux;
   std::queue<Elem> _data;
-  unsigned _size;
+  unsigned _size {0};
 };
 
 template <class Elem, unsigned maxSize>

@@ -8,7 +8,11 @@
 
 struct DummyScheduleAgent {
   void deleteFuncCtx() {}
-  void sched(cxxtp::Task task) {
+  void sched(cxxtp::Task&& task) {
+    auto obj = queue->tryPush(std::move(task));
+    assert(!obj.has_value());
+  }
+  void suspend(cxxtp::Task&& task) {
     auto obj = queue->tryPush(std::move(task));
     assert(!obj.has_value());
   }

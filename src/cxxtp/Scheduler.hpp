@@ -52,6 +52,8 @@ class Scheduler {
 
   void sched(Task &&task);
 
+  void suspend(Task &&task);
+
   template <class... DuArgs>
   auto sleep_for(std::chrono::duration<DuArgs...> du) {
     using namespace std::chrono_literals;
@@ -94,7 +96,7 @@ class Scheduler {
   void _schedImpl(Task &&task);
 
   using WorkerMap = std::map<std::thread::id, Worker *>;
-  bool _tryAllocTasksToWorkers();
+  bool _tryAllocTasksToWorkers(std::mutex& mux, std::queue<Task>& q);
   void _schedulerOnce();
   Worker *_getNextWorker();
   bool _tryAllocBufTaskToNextWorker(Task &task);
@@ -105,6 +107,8 @@ class Scheduler {
   std::thread::id _mainId;
   WorkerMap::iterator _nextAllocWorker;
   ContextList _liveContexts;
+  std::mutex _suspendMux;
+  std::queue<Task> _suspended;
 };
 
 using SchedApi = Scheduler::Agent;

@@ -66,14 +66,14 @@ bool Scheduler::_tryAllocBufTaskToNextWorker(Task &task) {
   return false;
 }
 
-bool Scheduler::_tryAllocTasksToWorkers() {
+bool Scheduler::_tryAllocTasksToWorkers(std::mutex& mux, std::queue<Task>& q) {
   assert(_mainId == std::this_thread::get_id());
-  std::unique_lock<std::mutex> lock(_mux, std::try_to_lock);
+  std::unique_lock<std::mutex> lock(mux, std::try_to_lock);
   if (!lock.owns_lock()) return false;
-  while (!_buffer.empty()) {
-    auto &task = _buffer.front();
+  while (!q.empty()) {
+    auto &task = q.front();
     if (_tryAllocBufTaskToNextWorker(task)) {
-      _buffer.pop();
+      q.pop();
       continue;
     }
     return false;
@@ -83,9 +83,14 @@ bool Scheduler::_tryAllocTasksToWorkers() {
 
 void Scheduler::_schedulerOnce() {
   assert(_mainId == std::this_thread::get_id());
-  _tryAllocTasksToWorkers();
+  _tryAllocTasksToWorkers(_mux, _buffer);
   if (auto task = _selfTasks.tryPop(); task.has_value()) {
     task.value()();
+  }
+  // _tryAllocTasksToWorkers(_suspendMux, _suspended);
+  if (!Worker::suspendQueue().empty()) {
+    Worker::suspendQueue().front()();
+    Worker::suspendQueue().pop();
   }
 }
 
@@ -102,6 +107,11 @@ void Scheduler::_schedImpl(Task &&t) {
 void Scheduler::sched(Task &&t) {
   std::lock_guard<std::mutex> lock(_mux);
   _schedImpl(std::move(t));
+}
+
+void Scheduler::suspend(Task &&task) {
+  std::lock_guard<std::mutex> lock(_suspendMux);
+  _suspended.push(std::move(task));
 }
 
 Scheduler::~Scheduler() {

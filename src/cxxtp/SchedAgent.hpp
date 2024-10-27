@@ -23,6 +23,7 @@ class SchedAgent {
   void deleteFuncCtx() { _deleter(); }
 
   void sched(Task&& task) { _server->sched(std::move(task)); }
+  void suspend(Task&& task) { _server->suspend(std::move(task)); }
 
   template <class Du>
   auto sleep_for(Du&& du) {

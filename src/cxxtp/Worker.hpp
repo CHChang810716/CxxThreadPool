@@ -1,8 +1,8 @@
 #pragma once
 #include <atomic>
+#include <coroutine>
 #include <functional>
 #include <thread>
-#include <coroutine>
 
 #include "cxxtp/TSQueue.hpp"
 #include "cxxtp/Task.hpp"
@@ -24,6 +24,7 @@ class Worker {
   std::thread::id getThreadId() const { return _t.get_id(); }
   void detach();
   size_t getNumPendingTasks() const { return _queue.size(); }
+  static std::queue<Task> &suspendQueue();
 
  private:
   void _workerOnce();

@@ -78,7 +78,7 @@ class Future {
         coro.destroy();
         sa.deleteFuncCtx();
       } else {
-        sa.sched([self]() mutable { self(self); });
+        Worker::suspendQueue().push([self]() mutable { self(self); });
       }
     };
     destruct(destruct);
@@ -88,7 +88,7 @@ class Future {
 
   void await_suspend(std::coroutine_handle<> caller) {
     if (!_active) throw std::runtime_error("await on dead future");
-    _schedulerAgent.sched([caller, this]() {
+    Worker::suspendQueue().push([caller, this]() {
       if (_internal.done())
         caller.resume();
       else

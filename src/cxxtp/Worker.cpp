@@ -22,10 +22,21 @@ void Worker::_workerOnce() {
 void Worker::_workerLoop() {
   while (_enabled.load()) {
     _workerOnce();
+    if (suspendQueue().empty())
+      continue;
+    suspendQueue().front()();
+    suspendQueue().pop();
   }
 }
 void Worker::detach() {
   _enabled.store(false);
   _t.detach();
 }
+
+std::queue<Task>& Worker::suspendQueue() {
+  static thread_local std::queue<Task> q;
+  return q;
+}
+
+
 }  // namespace cxxtp

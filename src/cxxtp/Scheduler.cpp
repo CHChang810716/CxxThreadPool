@@ -9,8 +9,7 @@ Scheduler::Scheduler(unsigned numThreads)
       _buffer(),
       _selfTasks(),
       _mainId(std::this_thread::get_id()),
-      _nextAllocWorker(),
-      _numStackLevel(0) {
+      _nextAllocWorker() {
   for (unsigned i = 0; i < numThreads - 1; ++i) {
     Worker *worker = new Worker(*this);
     _workers[worker->getThreadId()] = worker;
@@ -42,12 +41,12 @@ bool Scheduler::_tryAllocBufTaskToNextWorker(Task &task) {
             ? worker
             : minTasksWorker;
   }
-  if (minTasksWorker && minTasksWorker->getNumPendingTasks() < getNumPendingTasks()) {
-    if (minTasksWorker->trySubmit(task))
-      return true;
+  // TODO: move task
+  if (minTasksWorker &&
+      minTasksWorker->getNumPendingTasks() < getNumPendingTasks()) {
+    if (minTasksWorker->trySubmit(task)) return true;
   } else {
-    if (_selfTasks.tryPush(task))
-      return true;
+    if (_selfTasks.tryPush(task)) return true;
   }
   // Failed, try to find any workable worker.
   for (unsigned i = 0; i < _workers.size() + 1; ++i) {
@@ -86,10 +85,23 @@ void Scheduler::_schedulerOnce() {
   assert(_mainId == std::this_thread::get_id());
   _tryAllocTasksToWorkers();
   if (auto task = _selfTasks.tryPop(); task.has_value()) {
-    ++_numStackLevel;
     task.value()();
-    --_numStackLevel;
   }
+}
+
+void Scheduler::schedImpl(Task &&t) {
+  assert(t);
+  if (std::this_thread::get_id() == _mainId) {
+    while (!_tryAllocBufTaskToNextWorker(t))
+      ;
+  } else {
+    _buffer.emplace(std::move(t));
+  }
+}
+
+void Scheduler::sched(Task &&t) {
+  std::lock_guard<std::mutex> lock(_mux);
+  schedImpl(std::move(t));
 }
 
 Scheduler::~Scheduler() {

@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <memory>
+#include <cassert>
 
 namespace cxxtp {
 
@@ -8,6 +9,7 @@ struct ContextHeader {
   ContextHeader *prev{nullptr};
   ContextHeader *next{nullptr};
   unsigned size{0};
+  const std::uint32_t magic{0xdeadbeaf};
 };
 
 template <unsigned bytes>
@@ -38,16 +40,19 @@ class ContextList {
     static constexpr unsigned bytes = sizeof(T);
     using ContextT = Context<bytes>;
     fctx->~T();
-    auto *cheader = _resolveContextHeaderFromSpaceAddr(fctx);
+    auto *cheader = _resolveContextHeaderFromSpaceAddr(reinterpret_cast<char*>(fctx));
     cheader->prev->next = cheader->next;
-    cheader->next->prev = cheader->prev;
-    delete static_cast<ContextT*>(cheader);
+    if (cheader->next)
+      cheader->next->prev = cheader->prev;
+    delete static_cast<ContextT *>(cheader);
   }
 
  private:
   static ContextHeader *_resolveContextHeaderFromSpaceAddr(char *space) {
-    void *ctxAddr = space - offsetof(Context<0>, space);
-    return static_cast<ContextHeader *>(ctxAddr);
+    void *ctxAddr = space - sizeof(ContextHeader);
+    ContextHeader *header = static_cast<ContextHeader *>(ctxAddr);
+    assert(header->magic == 0xdeadbeaf);
+    return header;
   }
   ContextHeader _header;
   ContextHeader *_last;

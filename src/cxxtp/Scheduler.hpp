@@ -1,20 +1,28 @@
 #pragma once
 #include <cassert>
+#include <chrono>
 #include <future>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <queue>
+#include <stdexcept>
+#include <type_traits>
 #include <vector>
 
-// #include "cxxtp/FutureSet.hpp"
+#include "cxxtp/ContextList.hpp"
+#include "cxxtp/Future.hpp"
+#include "cxxtp/SchedAgent.hpp"
 #include "cxxtp/TSQueue.hpp"
 #include "cxxtp/Task.hpp"
+#include "cxxtp/Timer.hpp"
 #include "cxxtp/Worker.hpp"
-#include "cxxtp/ContextList.hpp"
 
 namespace cxxtp {
+
 class Scheduler {
+  friend SchedAgent<Scheduler>;
+
  public:
   Scheduler(unsigned numThreads);
   ~Scheduler();
@@ -28,53 +36,45 @@ class Scheduler {
     // 2. call the f from the list, a coroutine object returned -> co
     // 3. put co to queue
     // 4. in worker, pop queue and call co.resume()
-    // 5. when resume finish, check co status
-    //  if co is finished, call co.destroy() and destroy the related f in
-    //  Scheduler list otherwise, reschedule the co:
-    //  Scheduler._async_co(co)
     std::lock_guard<std::mutex> lock(_mux);
     auto *pfctx = _liveContexts.append(std::forward<FuncCtx>(fctx));
-    auto coroTask = pfctx->operator()(*this);
-    auto fut = coroTask.getFuture();
-    if (std::this_thread::get_id() == _mainId) {
-      while (!_tryAllocBufTaskToNextWorker(coroTask))
-        ;
-    } else {
-      _buffer.emplace(std::move(coroTask));
-    }
+    SchedAgent agent(this, pfctx);
+    auto fut = pfctx->operator()(agent);  // *this -> agent
+    auto coro = fut.getCoroutineHandle();
+    Task task = [coro]() { coro.resume(); };
+    schedImpl(std::move(task));
     return fut;
   }
 
-  unsigned getNumPendingTasks() const {
-    return _selfTasks.size() + _numStackLevel;
+  void sched(Task &&task);
+
+  template <class... DuArgs>
+  auto sleep_for(std::chrono::duration<DuArgs...> du) {
+    using namespace std::chrono_literals;
+    auto dutime = std::chrono::steady_clock::now() + du;
+    return Timer(this, dutime);
+  }
+
+  unsigned getNumPendingTasks() const { return _selfTasks.size(); }
+
+  template <class T>
+  T await(Future<T> &fut) {
+    auto myid = std::this_thread::get_id();
+    if (myid != _mainId) {
+      throw std::runtime_error(
+          "The scheduler await could only called from main thread");
+    }
+    while (!fut.await_ready()) {
+      _schedulerOnce();
+    }
+    if constexpr (!std::is_void_v<T>) {
+      return fut.await_resume();
+    }
   }
 
  private:
-  template <class T>
-  void _only_await(std::future<T> &fut) {
-    auto myid = std::this_thread::get_id();
-    auto iter = _workers.find(myid);
-    auto isFutReady = [&]() {
-      return fut.wait_for(std::chrono::seconds(0)) ==
-                 std::future_status::ready ||
-             !fut.valid();
-    };
-    if (iter == _workers.end()) {
-      if (_mainId == myid) {
-        while (!isFutReady()) {
-          _schedulerOnce();
-        }
-        assert(fut.valid());
-      } else {
-        fut.wait();
-      }
-    } else {
-      while (!isFutReady()) {
-        iter->second->_workerOnce();
-      }
-      assert(fut.valid());
-    }
-  }
+  void schedImpl(Task &&task);
+
   using WorkerMap = std::map<std::thread::id, Worker *>;
   bool _tryAllocTasksToWorkers();
   void _schedulerOnce();
@@ -86,7 +86,6 @@ class Scheduler {
   TSQueue<Task, MAX_WORKER_TASKS> _selfTasks;
   std::thread::id _mainId;
   WorkerMap::iterator _nextAllocWorker;
-  unsigned _numStackLevel;
   ContextList _liveContexts;
 };
 

@@ -23,7 +23,7 @@ class Worker {
   bool trySubmit(Task &t);
   std::thread::id getThreadId() const { return _t.get_id(); }
   void detach();
-  size_t getNumPendingTasks() const { return _numStaskTasks + _queue.size(); }
+  size_t getNumPendingTasks() const { return _queue.size(); }
 
  private:
   void _workerOnce();
@@ -32,7 +32,6 @@ class Worker {
   std::thread _t;
   TSQueue<Task, MAX_WORKER_TASKS> _queue;
   Scheduler *_scheduler;
-  unsigned _numStaskTasks;
 };
 
 }  // namespace cxxtp

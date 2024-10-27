@@ -89,7 +89,7 @@ void Scheduler::_schedulerOnce() {
   }
 }
 
-void Scheduler::schedImpl(Task &&t) {
+void Scheduler::_schedImpl(Task &&t) {
   assert(t);
   if (std::this_thread::get_id() == _mainId) {
     while (!_tryAllocBufTaskToNextWorker(t))
@@ -101,7 +101,7 @@ void Scheduler::schedImpl(Task &&t) {
 
 void Scheduler::sched(Task &&t) {
   std::lock_guard<std::mutex> lock(_mux);
-  schedImpl(std::move(t));
+  _schedImpl(std::move(t));
 }
 
 Scheduler::~Scheduler() {

@@ -62,7 +62,7 @@ class Future {
 
   Future(const Handle handle, SchedulerAgent sa)
       : _internal(handle), _schedulerAgent(sa), _active(true) {}
-  Future() = delete;
+
   Future(const Future &) = delete;
   Future(Future &&other)
       : _internal(std::move(other._internal)),
@@ -84,11 +84,10 @@ class Future {
     destruct(destruct);
   }
 
-  bool await_ready() { return _internal.done(); }
+  bool await_ready() { return _active && _internal.done(); }
 
   void await_suspend(std::coroutine_handle<> caller) {
-    if (!_active)
-      throw std::runtime_error("await on dead future");
+    if (!_active) throw std::runtime_error("await on dead future");
     _schedulerAgent.sched([caller, this]() {
       if (_internal.done())
         caller.resume();
@@ -98,8 +97,7 @@ class Future {
   }
 
   auto &&await_resume() {
-    if (!_active)
-      throw std::runtime_error("await on dead future");
+    if (!_active) throw std::runtime_error("await on dead future");
     assert(_internal.done());
     if constexpr (!std::is_void_v<T>) {
       return _internal.promise().value;

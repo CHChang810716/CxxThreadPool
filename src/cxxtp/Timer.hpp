@@ -7,7 +7,8 @@ namespace cxxtp {
 template <class Scheduler, class TimePoint>
 class Timer {
  public:
-  Timer(Scheduler* sched, TimePoint tp) : _scheduler(sched), _dutime(tp) {}
+  Timer(Scheduler* sched, TimePoint tp)
+      : _scheduler(sched), _dutime(tp) {}
 
   bool await_ready() { return false; }
   void await_suspend(std::coroutine_handle<> caller) {

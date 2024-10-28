@@ -1,42 +1,46 @@
 #include "cxxtp/Worker.hpp"
-
-#include "cxxtp/Scheduler.hpp"
+#include <cassert>
+#include <thread>
 
 namespace cxxtp {
 
-Worker::Worker(Scheduler &sched)
-    : _enabled(false), _queue(), _scheduler(&sched), _t() {
-  _enabled.store(true);
-  _t = std::thread([this]() { _workerLoop(); });
+Worker::Worker()
+    : _tid(std::this_thread::get_id()),
+      _enabled(false),
+      _ready(),
+      _suspended(),
+      _thread(nullptr) {}
+
+Worker::Worker(std::thread& t)
+    : _tid(), _enabled(true), _ready(), _suspended(), _thread(nullptr) {
+  t = std::thread([this]() {
+    while (_enabled.load()) {
+      if (auto task = _ready.tryPop(); task.has_value()) {
+        task.value()();
+      }
+    }
+  });
+  _tid = t.get_id();
+  _thread = &t;
 }
 
-bool Worker::trySubmit(Task &t) { 
-  assert(t);
-  return _queue.tryPush(t); 
-}
-void Worker::_workerOnce() {
-  if (auto task = _queue.tryPop(); task.has_value()) {
-    task.value()();
+void Worker::submit(Task&& t) {
+  auto forcePush = [&](auto& q) {
+    while (auto tmp = q.tryPush(std::move(t))) {
+      t = std::move(tmp.value());
+    }
+  };
+  if (std::this_thread::get_id() == getThreadId()) {
+    forcePush(_suspended);
+  } else {
+    forcePush(_ready);
   }
 }
-void Worker::_workerLoop() {
-  while (_enabled.load()) {
-    _workerOnce();
-    if (suspendQueue().empty())
-      continue;
-    suspendQueue().front()();
-    suspendQueue().pop();
-  }
-}
+
 void Worker::detach() {
   _enabled.store(false);
-  _t.detach();
+  if (_thread)
+    _thread->detach();
 }
-
-std::queue<Task>& Worker::suspendQueue() {
-  static thread_local std::queue<Task> q;
-  return q;
-}
-
 
 }  // namespace cxxtp

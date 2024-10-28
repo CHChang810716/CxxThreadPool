@@ -2,7 +2,7 @@
 #include <cstddef>
 #include <memory>
 #include <cassert>
-
+#include <mutex>
 namespace cxxtp {
 
 struct ContextHeader {
@@ -29,21 +29,28 @@ class ContextList {
     static constexpr unsigned bytes = sizeof(T);
     using ContextT = Context<bytes>;
     ContextT *ctx = new ContextT();
-    _last->next = ctx;
-    ctx->prev = _last;
-    _last = _last->next;
+    {
+      std::lock_guard<std::mutex> lock(_mux);
+      _last->next = ctx;
+      ctx->prev = _last;
+      _last = _last->next;
+    }
     return new (ctx->space) T(std::forward<T>(fctx));
   }
 
   template <class T>
-  static void remove(T *fctx) {
+  void remove(T *fctx) {
     static constexpr unsigned bytes = sizeof(T);
     using ContextT = Context<bytes>;
     fctx->~T();
     auto *cheader = _resolveContextHeaderFromSpaceAddr(reinterpret_cast<char*>(fctx));
-    cheader->prev->next = cheader->next;
-    if (cheader->next)
-      cheader->next->prev = cheader->prev;
+    {
+      std::lock_guard<std::mutex> lock(_mux);
+      cheader->prev->next = cheader->next;
+      if (cheader->next)
+        cheader->next->prev = cheader->prev;
+
+    }
     delete static_cast<ContextT *>(cheader);
   }
 
@@ -56,6 +63,7 @@ class ContextList {
   }
   ContextHeader _header;
   ContextHeader *_last;
+  std::mutex _mux; // TODO: lock free list
 };
 
 }  // namespace cxxtp

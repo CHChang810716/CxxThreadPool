@@ -1,19 +1,20 @@
 #pragma once
 #include <cassert>
 #include <chrono>
+#include <coroutine>
 #include <future>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <queue>
 #include <stdexcept>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
 #include "cxxtp/ContextList.hpp"
-#include "cxxtp/Future.hpp"
-#include "cxxtp/SchedAgent.hpp"
+#include "cxxtp/SchedCoroClient.hpp"
 #include "cxxtp/TSQueue.hpp"
 #include "cxxtp/Task.hpp"
 #include "cxxtp/Timer.hpp"
@@ -21,16 +22,14 @@
 
 namespace cxxtp {
 
-class Scheduler {
-  friend SchedAgent<Scheduler>;
+class Scheduler : public Worker {
 
  public:
-  using Agent = SchedAgent<Scheduler>;
   Scheduler(unsigned numThreads);
   ~Scheduler();
 
   template <class FuncCtx, class... Args>
-  auto async(FuncCtx &&fctx, Args &&...args) {
+  auto async(FuncCtx&& fctx, Args&&... args) {
     // 0-0. the return type of f should be coroutine
     // 0-1. the promise of coroutine type should have constructor to
     // capture the Scheduler
@@ -38,79 +37,72 @@ class Scheduler {
     // 2. call the f from the list, a coroutine object returned -> co
     // 3. put co to queue
     // 4. in worker, pop queue and call co.resume()
-
-    std::lock_guard<std::mutex> lock(_mux);
-
-    auto fut =
-        _async_0(std::is_function<std::remove_cvref_t<FuncCtx>>(),
-                 std::forward<FuncCtx>(fctx), std::forward<Args>(args)...);
-    auto coro = fut.getCoroutineHandle();
-    Task task = [coro]() { coro.resume(); };
-    _schedImpl(std::move(task));
+    auto fut = [&]() {
+      if constexpr (std::is_function_v<
+                        std::remove_cvref_t<FuncCtx>>) {
+        SchedCoroClient agent(this);
+        return fctx(agent, std::forward<Args>(args)...);
+      } else {
+        auto pfctx =
+            _liveContexts.append(std::forward<FuncCtx>(fctx));
+        SchedCoroClient agent(this, pfctx);
+        return pfctx->operator()(
+            agent, std::forward<Args>(args)...);  // *this -> agent
+      }
+    }();
+    std::coroutine_handle<> coro = fut.getCoroutineHandle();
+    submit(std::move(coro));
     return fut;
   }
 
-  void sched(Task &&task);
-
-  void suspend(Task &&task);
+  template <class Fut>
+  decltype(auto) await(Fut& fut) {
+    auto myid = std::this_thread::get_id();
+    if (myid != this->getThreadId()) {
+      throw std::runtime_error(
+          "The scheduler await could only called from main thread "
+          "and none coroutine context");
+    }
+    while (!fut.await_ready()) {
+      _schedulerOnce();
+    }
+    if constexpr (!std::is_void_v<typename Fut::ValueType>) {
+      return fut.await_resume();
+    }
+  }
 
   template <class... DuArgs>
-  auto sleep_for(std::chrono::duration<DuArgs...> du) {
+  auto suspendFor(std::chrono::duration<DuArgs...> du) {
     using namespace std::chrono_literals;
     auto dutime = std::chrono::steady_clock::now() + du;
     return Timer(this, dutime);
   }
 
-  unsigned getNumPendingTasks() const { return _selfTasks.size(); }
+  void submit(Task&& t) {
+    if (std::this_thread::get_id() == getThreadId()) {
+      _submitToNextWorker(std::move(t), true);
+    } else {
+      _workers[std::this_thread::get_id()]->submit(std::move(t));
+    }
+  }
 
-  template <class T>
-  T await(Future<T> &fut) {
-    auto myid = std::this_thread::get_id();
-    if (myid != _mainId) {
-      throw std::runtime_error(
-          "The scheduler await could only called from main thread");
-    }
-    while (!fut.await_ready()) {
-      _schedulerOnce();
-    }
-    if constexpr (!std::is_void_v<T>) {
-      return fut.await_resume();
-    }
+  template <class FuncCtx>
+  void deleteFuncCtx(FuncCtx* ptr) {
+    _liveContexts.remove(ptr);
   }
 
  private:
-  template <class FuncCtx, class... Args>
-  auto _async_0(std::true_type, FuncCtx &&fctx, Args &&...args) {
-    SchedAgent agent(this);
-    auto fut = fctx(agent, std::forward<Args>(args)...);
-    return fut;
-  }
-  template <class FuncCtx, class... Args>
-  auto _async_0(std::false_type, FuncCtx &&fctx, Args &&...args) {
-    auto pfctx = _liveContexts.append(std::forward<FuncCtx>(fctx));
-    SchedAgent agent(this, pfctx);
-    auto fut = pfctx->operator()(
-        agent, std::forward<Args>(args)...);  // *this -> agent
-    return fut;
-  }
-  void _schedImpl(Task &&task);
-
-  using WorkerMap = std::map<std::thread::id, Worker *>;
-  bool _tryAllocTasksToWorkers(std::mutex& mux, std::queue<Task>& q);
+  using WorkerMap = std::map<std::thread::id, Worker*>;
   void _schedulerOnce();
-  Worker *_getNextWorker();
-  bool _tryAllocBufTaskToNextWorker(Task &task);
+  Worker* _getNextWorker();
+  void _submitToNextWorker(Task&& task, bool schedulerIsWorker);
+  void _allocSuspendedTasksToWorkers();
   WorkerMap _workers;
-  std::mutex _mux;
-  std::queue<Task> _buffer;
-  TSQueue<Task, MAX_WORKER_TASKS> _selfTasks;
-  std::thread::id _mainId;
+  std::vector<std::thread> _threads;
   WorkerMap::iterator _nextAllocWorker;
   ContextList _liveContexts;
-  std::mutex _suspendMux;
-  std::queue<Task> _suspended;
 };
 
-using SchedApi = Scheduler::Agent;
+using CoSchedApi = SchedCoroClient<Scheduler>;
 
 }  // namespace cxxtp

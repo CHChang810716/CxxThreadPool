@@ -144,7 +144,7 @@ int fib(int n) {
     return fib(n - 1) + fib(n - 2);
 }
 
-cxxtp::Future<int> pfib(cxxtp::SchedApi sched, int n) {
+cxxtp::Future<int> pfib(cxxtp::CoSchedApi sched, int n) {
   if (n <= 32) {
     auto res = fib(n);
     co_return res;
@@ -157,13 +157,14 @@ cxxtp::Future<int> pfib(cxxtp::SchedApi sched, int n) {
 }
 
 TEST(Scheduler, recursive_await_test) {
+  constexpr int testN = 48;
   auto start = std::chrono::steady_clock::now();
-  auto stRes = fib(48);
+  auto stRes = fib(testN);
   auto duST = std::chrono::steady_clock::now() - start;
 
   cxxtp::Scheduler sched(4);
   start = std::chrono::steady_clock::now();
-  auto fut = sched.async(pfib, 48);
+  auto fut = sched.async(pfib, testN);
   auto mtRes = sched.await(fut);
   std::cout << mtRes << std::endl;
   auto duMT = std::chrono::steady_clock::now() - start;

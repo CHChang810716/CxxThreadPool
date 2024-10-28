@@ -8,11 +8,7 @@
 
 struct DummyScheduleAgent {
   void deleteFuncCtx() {}
-  void sched(cxxtp::Task&& task) {
-    auto obj = queue->tryPush(std::move(task));
-    assert(!obj.has_value());
-  }
-  void suspend(cxxtp::Task&& task) {
+  void submit(cxxtp::Task&& task) {
     auto obj = queue->tryPush(std::move(task));
     assert(!obj.has_value());
   }
@@ -53,7 +49,7 @@ TEST(Future, coroutine_await) {
       co_return;
     };
     auto fut2 = coro2(agent);
-    agent.sched([coro = fut2.getCoroutineHandle()]() { coro.resume(); });
+    agent.submit([coro = fut2.getCoroutineHandle()]() { coro.resume(); });
   }
   agent.runTask();
   EXPECT_GT(agent.queue->size(), 0);
@@ -71,14 +67,14 @@ TEST(Future, coroutine_await2) {
     auto coro2 = [&flag](DummyScheduleAgent sched)
         -> cxxtp::Future<void, DummyScheduleAgent> {
       auto fut1 = coro1(sched, 10);
-      sched.sched([coro = fut1.getCoroutineHandle()]() { coro.resume(); });
+      sched.submit([coro = fut1.getCoroutineHandle()]() { coro.resume(); });
       int n = co_await fut1;
       EXPECT_EQ(n, 11);
       flag = true;
       co_return;
     };
     auto fut2 = coro2(agent);
-    agent.sched([coro = fut2.getCoroutineHandle()]() { coro.resume(); });
+    agent.submit([coro = fut2.getCoroutineHandle()]() { coro.resume(); });
   }
   while (agent.queue->size() > 0) {
     agent.runTask();

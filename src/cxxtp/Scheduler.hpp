@@ -19,6 +19,8 @@
 #include "cxxtp/Task.hpp"
 #include "cxxtp/Timer.hpp"
 #include "cxxtp/Worker.hpp"
+#include "cxxtp/ts_queue/LockQueue.hpp"
+#include "cxxtp/ts_queue/TryLockQueue.hpp"
 
 namespace cxxtp {
 
@@ -39,7 +41,8 @@ class Scheduler : public Worker {
     // 4. in worker, pop queue and call co.resume()
     auto fut = [&]() {
       if constexpr (std::is_function_v<
-                        std::remove_cvref_t<FuncCtx>>) {
+                        std::remove_cvref_t<FuncCtx>> ||
+                    std::is_lvalue_reference_v<FuncCtx>) {
         SchedCoroClient agent(this);
         return fctx(agent, std::forward<Args>(args)...);
       } else {
@@ -79,10 +82,15 @@ class Scheduler : public Worker {
   }
 
   void submit(Task&& t) {
+    std::optional<Task> tt;
     if (std::this_thread::get_id() == getThreadId()) {
-      _submitToNextWorker(std::move(t), true);
+      tt = _trySubmitToNextWorker(std::move(t), true);
     } else {
-      _workers[std::this_thread::get_id()]->submit(std::move(t));
+      tt = _workers[std::this_thread::get_id()]->trySubmit(
+          std::move(t));
+    }
+    if (tt.has_value()) {
+      _slowQ.push(std::move(tt.value()));
     }
   }
 
@@ -94,13 +102,13 @@ class Scheduler : public Worker {
  private:
   using WorkerMap = std::map<std::thread::id, Worker*>;
   void _schedulerOnce();
-  Worker* _getNextWorker();
-  void _submitToNextWorker(Task&& task, bool schedulerIsWorker);
-  void _allocSuspendedTasksToWorkers();
+  std::optional<Task> _trySubmitToNextWorker(Task&& task,
+                                             bool schedulerIsWorker);
+  bool _allocSuspendedTasksToWorkers();
   WorkerMap _workers;
   std::vector<std::thread> _threads;
-  WorkerMap::iterator _nextAllocWorker;
   ContextList _liveContexts;
+  ts_queue::LockQueue<Task> _slowQ;
 };
 
 using CoSchedApi = SchedCoroClient<Scheduler>;

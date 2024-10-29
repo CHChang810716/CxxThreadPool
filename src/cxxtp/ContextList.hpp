@@ -1,13 +1,14 @@
 #pragma once
+#include <cassert>
 #include <cstddef>
 #include <memory>
-#include <cassert>
 #include <mutex>
+#include <utility>
 namespace cxxtp {
 
 struct ContextHeader {
-  ContextHeader *prev{nullptr};
-  ContextHeader *next{nullptr};
+  ContextHeader* prev{nullptr};
+  ContextHeader* next{nullptr};
   unsigned size{0};
   const std::uint32_t magic{0xdeadbeaf};
 };
@@ -25,45 +26,48 @@ class ContextList {
   }
 
   template <class T>
-  T *append(T &&fctx) {
-    static constexpr unsigned bytes = sizeof(T);
-    using ContextT = Context<bytes>;
-    ContextT *ctx = new ContextT();
-    {
-      std::lock_guard<std::mutex> lock(_mux);
-      _last->next = ctx;
-      ctx->prev = _last;
-      _last = _last->next;
-    }
-    return new (ctx->space) T(std::forward<T>(fctx));
+  T* append(T&& fctx) {
+    // static constexpr unsigned bytes = sizeof(T);
+    // using ContextT = Context<bytes>;
+    // ContextT *ctx = new ContextT();
+    // {
+    //   std::lock_guard<std::mutex> lock(_mux);
+    //   _last->next = ctx;
+    //   ctx->prev = _last;
+    //   _last = _last->next;
+    // }
+    // return new (ctx->space) T(std::forward<T>(fctx));
+    return new T(std::forward<T>(fctx));
   }
 
   template <class T>
-  void remove(T *fctx) {
-    static constexpr unsigned bytes = sizeof(T);
-    using ContextT = Context<bytes>;
-    fctx->~T();
-    auto *cheader = _resolveContextHeaderFromSpaceAddr(reinterpret_cast<char*>(fctx));
-    {
-      std::lock_guard<std::mutex> lock(_mux);
-      cheader->prev->next = cheader->next;
-      if (cheader->next)
-        cheader->next->prev = cheader->prev;
-
-    }
-    delete static_cast<ContextT *>(cheader);
+  void remove(T* fctx) {
+    // static constexpr unsigned bytes = sizeof(T);
+    // using ContextT = Context<bytes>;
+    // fctx->~T();
+    // auto* cheader = _resolveContextHeaderFromSpaceAddr(
+    //     reinterpret_cast<char*>(fctx));
+    // {
+    //   std::lock_guard<std::mutex> lock(_mux);
+    //   cheader->prev->next = cheader->next;
+    //   if (cheader->next)
+    //     cheader->next->prev = cheader->prev;
+    // }
+    // delete static_cast<ContextT*>(cheader);
+    delete fctx;
   }
 
  private:
-  static ContextHeader *_resolveContextHeaderFromSpaceAddr(char *space) {
-    void *ctxAddr = space - sizeof(ContextHeader);
-    ContextHeader *header = static_cast<ContextHeader *>(ctxAddr);
+  static ContextHeader* _resolveContextHeaderFromSpaceAddr(
+      char* space) {
+    void* ctxAddr = space - sizeof(ContextHeader);
+    ContextHeader* header = static_cast<ContextHeader*>(ctxAddr);
     assert(header->magic == 0xdeadbeaf);
     return header;
   }
   ContextHeader _header;
-  ContextHeader *_last;
-  std::mutex _mux; // TODO: lock free list
+  ContextHeader* _last;
+  std::mutex _mux;  // TODO: lock free list
 };
 
 }  // namespace cxxtp

@@ -4,14 +4,13 @@
 namespace cxxtp {
 
 Scheduler::Scheduler(unsigned numThreads)
-    : _workers(), _threads(), _nextAllocWorker(), _liveContexts() {
+    : _workers(), _threads(), _liveContexts() {
   _threads.resize(numThreads - 1);
   for (auto& t : _threads) {
     Worker* worker = new Worker(t);
     _workers[worker->getThreadId()] = worker;
   }
   _workers[getThreadId()] = this;
-  _nextAllocWorker = _workers.begin();
 }
 
 Scheduler::~Scheduler() {
@@ -22,21 +21,14 @@ Scheduler::~Scheduler() {
   }
 }
 
-Worker* Scheduler::_getNextWorker() {
-  assert(getThreadId() == std::this_thread::get_id());
-  if (_nextAllocWorker == _workers.end()) {
-    _nextAllocWorker = _workers.begin();
-  }
-  auto res = _nextAllocWorker->second;
-  _nextAllocWorker++;
-  return res;
-}
-
-void Scheduler::_submitToNextWorker(Task&& task, bool schedulerIsWorker) {
+std::optional<Task> Scheduler::_trySubmitToNextWorker(
+    Task&& task, bool schedulerIsWorker) {
+  // TODO: need smarter
   Worker* minTasksWorker = nullptr;
   // Try assign task to the most leisurely worker.
   for (auto& [tid, worker] : _workers) {
-    if (tid == getThreadId() && !schedulerIsWorker) continue;
+    if (tid == getThreadId() && !schedulerIsWorker)
+      continue;
     if (!minTasksWorker) {
       minTasksWorker = worker;
       continue;
@@ -46,25 +38,39 @@ void Scheduler::_submitToNextWorker(Task&& task, bool schedulerIsWorker) {
                          ? worker
                          : minTasksWorker;
   }
-  // if the Scheduler self is chosen, the submit won't recursive, 
+  // if the Scheduler self is chosen, the submit won't recursive,
   // because now we use the Worker pointer without virtual
-  minTasksWorker->submit(std::move(task));
+  return minTasksWorker->trySubmit(std::move(task));
 }
 
-void Scheduler::_allocSuspendedTasksToWorkers() {
+bool Scheduler::_allocSuspendedTasksToWorkers() {
   assert(getThreadId() == std::this_thread::get_id());
-  for (auto &[id, worker] : _workers) {
+  bool slowQUsed = false;
+  for (auto& [id, worker] : _workers) {
     while (auto task = worker->_suspended.tryPop()) {
-      _submitToNextWorker(std::move(task.value()), false);
+      auto tt = _trySubmitToNextWorker(std::move(task.value()), false);
+      if (!tt.has_value())
+        continue;
+      _slowQ.push(std::move(tt.value()));
+      slowQUsed = true;
     }
   }
+  return !slowQUsed;
 }
 
 void Scheduler::_schedulerOnce() {
   assert(getThreadId() == std::this_thread::get_id());
-  _allocSuspendedTasksToWorkers();
+  bool suspendedTasksClean = _allocSuspendedTasksToWorkers();
   if (auto task = _ready.tryPop(); task.has_value()) {
     task.value()();
+  }
+  if (suspendedTasksClean) {
+    auto tmpSQ = _slowQ.takeAll();
+    while (!tmpSQ.empty()) {
+      auto task = std::move(tmpSQ.front());
+      submit(std::move(task));
+      tmpSQ.pop();
+    }
   }
 }
 

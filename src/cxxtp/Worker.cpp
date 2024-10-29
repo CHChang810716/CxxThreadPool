@@ -24,16 +24,11 @@ Worker::Worker(std::thread& t)
   _thread = &t;
 }
 
-void Worker::submit(Task&& t) {
-  auto forcePush = [&](auto& q) {
-    while (auto tmp = q.tryPush(std::move(t))) {
-      t = std::move(tmp.value());
-    }
-  };
+std::optional<Task> Worker::trySubmit(Task&& t) {
   if (std::this_thread::get_id() == getThreadId()) {
-    forcePush(_suspended);
+    return _suspended.tryPush(std::move(t));
   } else {
-    forcePush(_ready);
+    return _ready.tryPush(std::move(t));
   }
 }
 

@@ -2,6 +2,7 @@
 #include <atomic>
 #include <coroutine>
 #include <functional>
+#include <optional>
 #include <thread>
 
 #include "cxxtp/TSQueue.hpp"
@@ -20,14 +21,14 @@ class Worker {
   explicit Worker();
   explicit Worker(std::thread& t);
 
-  void submit(Task&& t);
+  std::optional<Task> trySubmit(Task&& t);
 
   std::thread::id getThreadId() const { return _tid; }
 
   void detach();
 
   size_t getNumPendingTasks() const {
-    return _ready.size() + _suspended.size();
+    return _ready.size();
   }
 
  private:

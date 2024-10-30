@@ -8,11 +8,12 @@
 #include "cxxtp/TSQueue.hpp"
 #include "cxxtp/Task.hpp"
 #include "cxxtp/ts_queue/CircularQueue.hpp"
+#include "cxxtp/ts_queue/STQueue.hpp"
 #include "cxxtp/ts_queue/TryLockQueue.hpp"
 
 namespace cxxtp {
 
-constexpr unsigned MAX_WORKER_TASKS = 1024;
+constexpr unsigned MAX_WORKER_TASKS = 4;
 
 class Scheduler;
 

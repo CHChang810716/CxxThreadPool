@@ -7,7 +7,7 @@
 namespace cxxtp::ts_queue {
 
 template <class Elem, unsigned maxSize>
-class TryLockQueue {
+class STQueue {
  public:
   TransRes<Elem> tryPop();           // has value -> success
   TransRes<Elem> tryPush(Elem&& o);  // has value -> failed
@@ -15,16 +15,12 @@ class TryLockQueue {
   unsigned size() const { return _size; }
 
  private:
-  std::mutex _mux;
+  unsigned _size {0};
   std::queue<Elem> _data;
-  unsigned _size{0};
 };
 
 template <class Elem, unsigned maxSize>
-TransRes<Elem> TryLockQueue<Elem, maxSize>::tryPop() {
-  std::unique_lock<std::mutex> lock(_mux, std::try_to_lock);
-  if (!lock.owns_lock())
-    return TS_RACE;
+TransRes<Elem> STQueue<Elem, maxSize>::tryPop() {
   if (_data.empty())
     return TS_EMPTY;
   Elem res = std::move(_data.front());
@@ -34,22 +30,16 @@ TransRes<Elem> TryLockQueue<Elem, maxSize>::tryPop() {
 }
 
 template <class Elem, unsigned maxSize>
-TransRes<Elem> TryLockQueue<Elem, maxSize>::tryPush(Elem&& obj) {
-  std::unique_lock<std::mutex> lock(_mux, std::try_to_lock);
-  if (!lock.owns_lock())
-    return {std::move(obj), TS_RACE};
-  ++_size;
+TransRes<Elem> STQueue<Elem, maxSize>::tryPush(Elem&& obj) {
   _data.push(std::move(obj));
+  ++_size;
   return {std::nullopt, TS_DONE};
 }
 
 template <class Elem, unsigned maxSize>
-TransStatus TryLockQueue<Elem, maxSize>::tryPush(Elem& obj) {
-  std::unique_lock<std::mutex> lock(_mux, std::try_to_lock);
-  if (!lock.owns_lock())
-    return TS_RACE;
-  ++_size;
+TransStatus STQueue<Elem, maxSize>::tryPush(Elem& obj) {
   _data.push(obj);
+  ++_size;
   return TS_DONE;
 }
 

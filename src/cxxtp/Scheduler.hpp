@@ -86,19 +86,23 @@ class Scheduler : public Worker {
     TaskTransRes tt;
     if (std::this_thread::get_id() == getThreadId()) {
       tt = _trySubmitToNextWorker(std::move(t), true);
+      if (tt.has_value()) {
+        auto tmp = _suspended.tryPush(std::move(tt.value()));
+        assert(!tmp.has_value());
+      }
     } else {
       auto& w = _workers[std::this_thread::get_id()];
       do {
         tt = w->trySubmit(std::move(t));
-        if (tt.status == ts_queue::TS_DONE ||
-            tt.status == ts_queue::TS_FULL)
+        assert(tt.status != ts_queue::TS_FULL);
+        if (tt.status == ts_queue::TS_DONE)
           break;
         t = std::move(tt.value());
       } while (true);
     }
-    if (tt.has_value()) {
-      _slowQ.push(std::move(tt.value()));
-    }
+    // if (tt.has_value()) {
+    //   _slowQ.push(std::move(tt.value()));
+    // }
   }
 
   template <class FuncCtx>

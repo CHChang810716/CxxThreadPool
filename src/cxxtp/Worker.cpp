@@ -25,9 +25,10 @@ void Worker::_default_loop() {
   while (_enabled.load(std::memory_order_relaxed)) {
     if (auto task = _ready.tryPop(); task.has_value()) {
       task.value()();
-    } else if (auto task = _suspended.tryPop(); task.has_value()) {
-      task.value()();
-    }
+    } 
+    // else if (auto task = _suspended.tryPop(); task.has_value()) {
+    //   task.value()();
+    // }
   }
 }
 

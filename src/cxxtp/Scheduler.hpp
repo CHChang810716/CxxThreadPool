@@ -20,6 +20,7 @@
 #include "cxxtp/Timer.hpp"
 #include "cxxtp/Worker.hpp"
 #include "cxxtp/ts_queue/LockQueue.hpp"
+#include "cxxtp/ts_queue/Status.hpp"
 #include "cxxtp/ts_queue/TryLockQueue.hpp"
 
 namespace cxxtp {
@@ -82,12 +83,18 @@ class Scheduler : public Worker {
   }
 
   void submit(Task&& t) {
-    std::optional<Task> tt;
+    TaskTransRes tt;
     if (std::this_thread::get_id() == getThreadId()) {
       tt = _trySubmitToNextWorker(std::move(t), true);
     } else {
-      tt = _workers[std::this_thread::get_id()]->trySubmit(
-          std::move(t));
+      auto& w = _workers[std::this_thread::get_id()];
+      do {
+        tt = w->trySubmit(std::move(t));
+        if (tt.status == ts_queue::TS_DONE ||
+            tt.status == ts_queue::TS_FULL)
+          break;
+        t = std::move(tt.value());
+      } while (true);
     }
     if (tt.has_value()) {
       _slowQ.push(std::move(tt.value()));
@@ -101,14 +108,17 @@ class Scheduler : public Worker {
 
  private:
   using WorkerMap = std::map<std::thread::id, Worker*>;
+  using WorkerIter = WorkerMap::iterator;
   void _schedulerOnce();
-  std::optional<Task> _trySubmitToNextWorker(Task&& task,
-                                             bool schedulerIsWorker);
+  TaskTransRes _trySubmitToNextWorker(Task&& task,
+                                      bool schedulerIsWorker);
   bool _allocSuspendedTasksToWorkers();
+  Worker* _getNextWorker();
   WorkerMap _workers;
   std::vector<std::thread> _threads;
   ContextList _liveContexts;
   ts_queue::LockQueue<Task> _slowQ;
+  WorkerIter _nextWorker;
 };
 
 using CoSchedApi = SchedCoroClient<Scheduler>;

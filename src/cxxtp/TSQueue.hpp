@@ -4,10 +4,10 @@
 
 namespace cxxtp {
 
-// template <class Elem, unsigned maxSize>
-// class TSQueue : public ts_queue::TryLockQueue<Elem, maxSize> {};
-
 template <class Elem, unsigned maxSize>
-class TSQueue : public ts_queue::CircularQueue<Elem, maxSize> {};
+class TSQueue : public ts_queue::TryLockQueue<Elem, maxSize> {};
+
+// template <class Elem, unsigned maxSize>
+// class TSQueue : public ts_queue::CircularQueue<Elem, maxSize> {};
 
 } // namespace cxxtp

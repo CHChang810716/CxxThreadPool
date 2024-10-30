@@ -3,6 +3,7 @@
 #include <optional>
 #include <queue>
 #include <thread>
+#include "cxxtp/ts_queue/Status.hpp"
 
 namespace cxxtp::ts_queue {
 
@@ -33,9 +34,9 @@ using CircularQueueChecker = CircularQueueCheckerDebug;
 template <class Elem, unsigned maxSize>
 class CircularQueue : private CircularQueueChecker {
  public:
-  std::optional<Elem> tryPop();           // has value -> success
-  std::optional<Elem> tryPush(Elem&& o);  // has value -> failed
-  bool tryPush(Elem& o);
+  TransRes<Elem> tryPop();           // has value -> success
+  TransRes<Elem> tryPush(Elem&& o);  // has value -> failed
+  TransStatus tryPush(Elem& o);
   unsigned size() const;
 
  private:
@@ -53,20 +54,20 @@ unsigned CircularQueue<Elem, maxSize>::_next(unsigned i) {
 }
 // always move index at operation end
 template <class Elem, unsigned maxSize>
-std::optional<Elem> CircularQueue<Elem, maxSize>::tryPop() {
+TransRes<Elem> CircularQueue<Elem, maxSize>::tryPop() {
   // pop front push back
   checkPop();
   auto f = _front.load(std::memory_order_acquire);
   auto b = _back.load(std::memory_order_acquire);
   if (f == b)
-    return std::nullopt;
+    return TS_EMPTY;
   Elem res = std::move(_data[f]);
   _front.store(_next(f), std::memory_order_release);
-  return res;
+  return {std::move(res), TS_DONE};
 }
 
 template <class Elem, unsigned maxSize>
-std::optional<Elem> CircularQueue<Elem, maxSize>::tryPush(
+TransRes<Elem> CircularQueue<Elem, maxSize>::tryPush(
     Elem&& obj) {
   // pop front push back
   checkPush();
@@ -74,19 +75,19 @@ std::optional<Elem> CircularQueue<Elem, maxSize>::tryPush(
   auto b = _back.load(std::memory_order_acquire);
   auto nb = _next(b);
   if (nb == f)
-    return obj;
+    return {std::move(obj), TS_FULL};
   _data[b] = std::move(obj);
   _back.store(nb, std::memory_order_release);
-  return std::nullopt;
+  return {std::nullopt, TS_DONE};
 }
 template <class Elem, unsigned maxSize>
-bool CircularQueue<Elem, maxSize>::tryPush(Elem& obj) {
+TransStatus CircularQueue<Elem, maxSize>::tryPush(Elem& obj) {
   checkPush();
   auto copy = [](Elem& o) -> Elem&& {
     return o;
   };
   auto tmp = tryPush(copy(obj));
-  return !tmp.has_value();
+  return tmp.status;
 }
 // maxSize = 3
 // arrSize = 4

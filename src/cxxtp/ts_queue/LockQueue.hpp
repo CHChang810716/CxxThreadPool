@@ -28,13 +28,14 @@ class LockQueue {
     std::lock_guard<std::mutex> lock(_mux);
     std::queue<T> tmp;
     _data.swap(tmp);
+    _size = 0;
     return std::move(tmp);
   }
 
  private:
   std::mutex _mux;
   std::queue<T> _data;
-  std::size_t _size;
+  std::size_t _size {0};
 };
 
 }  // namespace cxxtp::ts_queue

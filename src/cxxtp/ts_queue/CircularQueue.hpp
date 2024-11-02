@@ -1,8 +1,10 @@
 #pragma once
+#include <array>
 #include <atomic>
 #include <optional>
 #include <queue>
 #include <thread>
+#include <vector>
 #include "cxxtp/ts_queue/Status.hpp"
 
 namespace cxxtp::ts_queue {
@@ -45,7 +47,8 @@ class CircularQueue : private CircularQueueChecker {
   static unsigned _next(unsigned i);
   std::atomic<unsigned> _front{0};
   std::atomic<unsigned> _back{0};
-  Elem _data[arrSize];
+  std::vector<Elem> _data{arrSize};
+  // std::array<Elem, arrSize> _data;
 };
 
 template <class Elem, unsigned maxSize>
@@ -67,8 +70,7 @@ TransRes<Elem> CircularQueue<Elem, maxSize>::tryPop() {
 }
 
 template <class Elem, unsigned maxSize>
-TransRes<Elem> CircularQueue<Elem, maxSize>::tryPush(
-    Elem&& obj) {
+TransRes<Elem> CircularQueue<Elem, maxSize>::tryPush(Elem&& obj) {
   // pop front push back
   checkPush();
   auto f = _front.load(std::memory_order_acquire);

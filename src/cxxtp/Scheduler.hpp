@@ -83,26 +83,12 @@ class Scheduler : public Worker {
   }
 
   void submit(Task&& t) {
-    TaskTransRes tt;
     if (std::this_thread::get_id() == getThreadId()) {
-      tt = _trySubmitToNextWorker(std::move(t), true);
-      if (tt.has_value()) {
-        auto tmp = _suspended.tryPush(std::move(tt.value()));
-        assert(!tmp.has_value());
-      }
+      _submitToNextWorker(std::move(t), true);
     } else {
       auto& w = _workers[std::this_thread::get_id()];
-      do {
-        tt = w->trySubmit(std::move(t));
-        assert(tt.status != ts_queue::TS_FULL);
-        if (tt.status == ts_queue::TS_DONE)
-          break;
-        t = std::move(tt.value());
-      } while (true);
+      w->submit(std::move(t));
     }
-    // if (tt.has_value()) {
-    //   _slowQ.push(std::move(tt.value()));
-    // }
   }
 
   template <class FuncCtx>
@@ -114,14 +100,12 @@ class Scheduler : public Worker {
   using WorkerMap = std::map<std::thread::id, Worker*>;
   using WorkerIter = WorkerMap::iterator;
   void _schedulerOnce();
-  TaskTransRes _trySubmitToNextWorker(Task&& task,
-                                      bool schedulerIsWorker);
-  bool _allocSuspendedTasksToWorkers();
+  void _submitToNextWorker(Task&& task, bool schedulerIsWorker);
+  void _allocSuspendedTasksToWorkers();
   Worker* _getNextWorker();
   WorkerMap _workers;
   std::vector<std::thread> _threads;
   ContextList _liveContexts;
-  ts_queue::LockQueue<Task> _slowQ;
   WorkerIter _nextWorker;
 };
 

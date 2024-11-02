@@ -159,7 +159,7 @@ cxxtp::Future<int> pfib(cxxtp::CoSchedApi sched, int n) {
 TEST(Scheduler, recursive_await_test) {
   constexpr int testN = 48;
   auto start = std::chrono::steady_clock::now();
-  // auto stRes = fib(testN);
+  auto stRes = fib(testN);
   auto duST = std::chrono::steady_clock::now() - start;
 
   cxxtp::Scheduler sched(4);
@@ -170,7 +170,7 @@ TEST(Scheduler, recursive_await_test) {
   auto duMT = std::chrono::steady_clock::now() - start;
   std::cout << duST.count() << std::endl;
   std::cout << duMT.count() << std::endl;
-  // EXPECT_EQ(mtRes, stRes);
+  EXPECT_EQ(mtRes, stRes);
   EXPECT_TRUE(duST * 0.25 <= duMT);
   EXPECT_TRUE(duST * 0.3 > duMT);
 }

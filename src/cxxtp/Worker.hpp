@@ -13,36 +13,60 @@
 
 namespace cxxtp {
 
-constexpr unsigned MAX_WORKER_TASKS = 4;
-
 class Scheduler;
 
+constexpr unsigned MAX_WORKER_TASKS = 16;
+
 class Worker {
+
   friend Scheduler;
 
  public:
   explicit Worker();
-  
+
   explicit Worker(std::thread& t);
 
-  TaskTransRes trySubmit(Task&& t);
+  void submit(Task&& t);
 
   std::thread::id getThreadId() const { return _tid; }
 
   void detach();
 
-  size_t getNumPendingTasks() const {
-    return _ready.size();
+  size_t getNumPendingTasks() const { return _ready.size(); }
+
+ protected:
+  void _defaultLoop();
+
+  template <class Submitter>
+  void _defaultWork(Submitter& s) {
+    if (auto task = _ready.tryPop(); task.has_value()) {
+      if (!_pending.empty()) {
+        s.submit(std::move(_pending.front()));
+        _pending.pop();
+      }
+      task.value()();
+    } else {
+      if (!_pending.empty()) {
+        auto& t = _pending.front();
+        t();
+        _pending.pop();
+      }
+    }
   }
 
- private:
-  void _default_loop();
   std::thread::id _tid;
+
   std::atomic<bool> _enabled{false};
-  ts_queue::CircularQueue<Task, MAX_WORKER_TASKS>
-      _ready{};  // master thread in worker thread out
-  ts_queue::TryLockQueue<Task, MAX_WORKER_TASKS>
-      _suspended{};  // worker thread in master thread out
+
+  /// master thread in worker thread out
+  ts_queue::CircularQueue<Task, MAX_WORKER_TASKS> _ready{};
+
+  /// worker thread in master thread out
+  ts_queue::CircularQueue<Task, MAX_WORKER_TASKS> _suspended{};
+
+  /// need reschedule tasks
+  static thread_local std::queue<Task> _pending;
+
   std::thread* _thread;
 };
 

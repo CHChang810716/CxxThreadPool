@@ -26,7 +26,7 @@ class SchedCoroClient {
 
   template <class Du>
   auto suspendFor(Du&& du) {
-    return _server->suspendfor(std::forward<Du>(du));
+    return _server->suspendFor(std::forward<Du>(du));
   }
 
   template <class... Args>
@@ -35,6 +35,8 @@ class SchedCoroClient {
   }
 
   void submit(Task&& t) { _server->submit(std::move(t)); }
+
+  Server *getImpl() { return _server; }
  private:
   Server* _server{nullptr};
   std::function<void(void)> _deleter{nullptr};

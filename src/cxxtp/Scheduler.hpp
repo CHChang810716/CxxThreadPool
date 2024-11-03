@@ -96,13 +96,19 @@ class Scheduler : public Worker {
     _liveContexts.remove(ptr);
   }
 
+  void printStatus();
+
  private:
   using WorkerMap = std::map<std::thread::id, Worker*>;
   using WorkerIter = WorkerMap::iterator;
   void _schedulerOnce();
   void _submitToNextWorker(Task&& task, bool schedulerIsWorker);
+  TaskTransRes _trySubmitToNextWorker(Task&& task, bool schedulerIsWorker);
   void _allocSuspendedTasksToWorkers();
+  void _submitToSelf(Task&& task);
+  TaskTransRes _trySubmitToSelf(Task&& task);
   Worker* _getNextWorker();
+  Worker* _getNextWorker(bool skipScheduler);
   WorkerMap _workers;
   std::vector<std::thread> _threads;
   ContextList _liveContexts;

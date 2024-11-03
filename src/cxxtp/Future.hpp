@@ -99,7 +99,7 @@ class Future {
     });
   }
 
-  auto&& await_resume() {
+  decltype(auto) await_resume() {
     if (!_active)
       throw std::runtime_error("await on dead future");
     assert(_internal.done());

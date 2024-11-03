@@ -33,14 +33,18 @@ void Worker::_defaultLoop() {
 
 void Worker::submit(Task&& t) {
   assert(t);
-  TaskTransRes tmp;
-  if (std::this_thread::get_id() == getThreadId()) {
-    tmp = _suspended.tryPush(std::move(t));
-  } else {
-    tmp = _ready.tryPush(std::move(t));
-  }
+  TaskTransRes tmp = trySubmit(std::move(t));
   if (tmp.status != ts_queue::TS_DONE) {
     _pending.push(std::move(tmp.value()));
+  }
+}
+
+TaskTransRes Worker::trySubmit(Task&& t) {
+  assert(t);
+  if (std::this_thread::get_id() == getThreadId()) {
+    return _suspended.tryPush(std::move(t));
+  } else {
+    return _ready.tryPush(std::move(t));
   }
 }
 

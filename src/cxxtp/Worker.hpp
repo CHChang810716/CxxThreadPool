@@ -9,13 +9,14 @@
 #include "cxxtp/Task.hpp"
 #include "cxxtp/ts_queue/CircularQueue.hpp"
 #include "cxxtp/ts_queue/STQueue.hpp"
+#include "cxxtp/ts_queue/Status.hpp"
 #include "cxxtp/ts_queue/TryLockQueue.hpp"
 
 namespace cxxtp {
 
 class Scheduler;
 
-constexpr unsigned MAX_WORKER_TASKS = 16;
+constexpr unsigned MAX_WORKER_TASKS = 1024;
 
 class Worker {
 
@@ -27,6 +28,8 @@ class Worker {
   explicit Worker(std::thread& t);
 
   void submit(Task&& t);
+
+  TaskTransRes trySubmit(Task&& t);
 
   std::thread::id getThreadId() const { return _tid; }
 

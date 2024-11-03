@@ -12,15 +12,13 @@ class Timer {
 
   bool await_ready() { return false; }
   void await_suspend(std::coroutine_handle<> caller) {
-    while (!_scheduler->trySubmit([caller, this]() {
+    _scheduler->submit([caller, this]() {
       if (TimePoint::clock::now() < _dutime) {
         await_suspend(caller);
       } else {
         caller.resume();
       }
-    })) {
-      // TODO: consume task
-    }
+    });
   }
   void await_resume() {}
 

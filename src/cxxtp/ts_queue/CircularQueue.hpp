@@ -135,8 +135,8 @@ unsigned CircularQueue<Elem, maxSize>::_size(unsigned b, unsigned f) {
 
 template <class Elem, unsigned maxSize>
 unsigned CircularQueue<Elem, maxSize>::size() const {
-  auto b = _back.load(std::memory_order_relaxed);
-  auto f = _front.load(std::memory_order_relaxed);
+  auto b = _back.load();
+  auto f = _front.load();
   return _size(b, f);
 }
 

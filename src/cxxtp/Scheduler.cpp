@@ -1,6 +1,9 @@
 #include "cxxtp/Scheduler.hpp"
 
+#include <chrono>
+#include <iostream>
 #include <mutex>
+#include "cxxtp/Task.hpp"
 #include "cxxtp/ts_queue/Status.hpp"
 namespace cxxtp {
 
@@ -23,22 +26,60 @@ Scheduler::~Scheduler() {
   }
 }
 
+void Scheduler::_submitToSelf(Task&& task) {
+  if (auto trans = _ready.tryPush(std::move(task));
+      trans.has_value()) {
+    _pending.push(std::move(trans.value()));
+  }
+}
+
+TaskTransRes Scheduler::_trySubmitToSelf(Task&& task) {
+  return _ready.tryPush(std::move(task));
+}
+
 void Scheduler::_submitToNextWorker(Task&& task,
                                     bool schedulerIsWorker) {
-  auto* worker = _getNextWorker();
-  if (!schedulerIsWorker && worker == this)
-    worker = _getNextWorker();
-  worker->submit(std::move(task));
+  auto* worker = _getNextWorker(!schedulerIsWorker);
+  if (worker == this)
+    _submitToSelf(std::move(task));
+  else
+    worker->submit(std::move(task));
+}
+
+TaskTransRes Scheduler::_trySubmitToNextWorker(
+    Task&& task, bool schedulerIsWorker) {
+
+  auto tryTimes = _workers.size() - !schedulerIsWorker;
+  TaskTransRes tmp;
+  for (unsigned i = 0; i < tryTimes; ++i) {
+    auto* worker = _getNextWorker(!schedulerIsWorker);
+    if (worker == this)
+      tmp = _trySubmitToSelf(std::move(task));
+    else
+      tmp = worker->trySubmit(std::move(task));
+    if (!tmp.has_value())
+      return tmp;
+    task = std::move(tmp.value());
+  }
+  tmp.value() = std::move(task);
+  return tmp;
 }
 
 void Scheduler::_allocSuspendedTasksToWorkers() {
   assert(getThreadId() == std::this_thread::get_id());
   for (auto& [id, worker] : _workers) {
     auto num = worker->_suspended.size();
-    auto task = worker->_suspended.tryPop();
-    if (!task.has_value())
-      continue;
-    _submitToNextWorker(std::move(task.value()), true);
+    for (unsigned i = 0; i < num; ++i) {
+      auto task = worker->_suspended.tryPop();
+      if (!task.has_value())
+        break;
+      task = _trySubmitToNextWorker(std::move(task.value()), true);
+      // printStatus();
+      if (task.has_value()) {  // all worker full
+        _pending.push(std::move(task.value()));
+        return;
+      }
+    }
   }
 }
 
@@ -57,4 +98,22 @@ Worker* Scheduler::_getNextWorker() {
   return res->second;
 }
 
+Worker* Scheduler::_getNextWorker(bool skipScheduler) {
+  auto* worker = _getNextWorker();
+  if (worker == this && skipScheduler) {
+    worker = _getNextWorker();
+  }
+  return worker;
+}
+
+static std::mutex mux;
+void Scheduler::printStatus() {
+  std::lock_guard<std::mutex> loc(mux);
+  std::cout << "timestamp: " << std::chrono::steady_clock::now().time_since_epoch().count() << std::endl;
+  for (auto& [id, pw] : _workers) {
+    std::cout << "  [" << std::hex << id << std::dec << "]: " << std::endl;
+    std::cout << "    ready:     " << pw->_ready.size() << std::endl;
+    std::cout << "    suspended: " << pw->_suspended.size() << std::endl;
+  }
+}
 }  // namespace cxxtp

@@ -8,7 +8,8 @@ enum TransStatus { TS_DONE, TS_RACE, TS_FULL, TS_EMPTY, TS_UNKNOWN };
 
 template <class Elem>
 struct TransRes : public std::optional<Elem> {
-  TransRes() : std::optional<Elem>(), status(TS_UNKNOWN) {}
+  TransRes()
+      : std::optional<Elem>(std::nullopt), status(TS_UNKNOWN) {}
 
   TransRes(Elem&& e, TransStatus s = TS_UNKNOWN)
       : std::optional<Elem>(std::move(e)), status(s) {}

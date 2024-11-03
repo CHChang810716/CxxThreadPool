@@ -35,7 +35,7 @@ struct VersionBlock {
 };
 
 template <class Elem, unsigned maxSize>
-class VersionQueue {
+class VersionQueue : public VersionQueueChecker {
   static_assert(
       maxSize < 65536,
       "maxSize too large, the integer distance might overflow");
@@ -65,17 +65,30 @@ template <class Elem, unsigned maxSize>
 TransRes<Elem> VersionQueue<Elem, maxSize>::tryPop() {
   static constexpr unsigned retryTimes = 5;
   static thread_local ConsumerApi api;
-  int d = _intDist(api.readIdx, _writeIdx);
-  assert(d >= 0 && "queue in bug state, stop");
-  if (d == 0)
-    return {std::nullopt, TS_EMPTY};
   for (int i = 0; i < retryTimes; ++i) {
+    int d = _intDist(api.readIdx, _writeIdx);
+    assert(d >= 0 && "queue in bug state, stop");
+    if (d == 0)
+      return {std::nullopt, TS_EMPTY};
     auto& b = _data[api.readIdx];
+    api.readIdx = _next(api.readIdx);
+    // If version is not 0, update the version and read the data.
+    // And because there might me multiple consumers, we need to take care the memory order of version.
+    auto bv = b.version.load(std::memory_order_acquire); // read version
+    if (bv != 0) {
+      // CAS
+      if (b.version.compare_exchange_weak(bv, 0, std::memory_order_acq_rel)) {
+        // Now we have the block data, read the data and return.
+        return {std::move(b.obj), TS_DONE};
+      }
+    }
   }
+  return {std::nullopt, TS_RACE};
 }
 
 template <class Elem, unsigned maxSize>
 TransRes<Elem> VersionQueue<Elem, maxSize>::tryPush(Elem&& o) {
+  checkPush();
   TransRes<Elem> res;
   auto& b = _data[_writeIdx];
   // write data if version == 0
@@ -85,8 +98,7 @@ TransRes<Elem> VersionQueue<Elem, maxSize>::tryPush(Elem&& o) {
     _curVersion = _nextVer(_curVersion);
     res.status = TS_DONE;
   } else {
-    res.status = TS_RACE;
-    res.value() = std::move(o);
+    res = {std::move(o), TS_FULL};
   }
   _writeIdx = _next(_writeIdx);
   return res;

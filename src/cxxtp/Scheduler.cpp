@@ -61,7 +61,7 @@ TaskTransRes Scheduler::_trySubmitToNextWorker(
       return tmp;
     task = std::move(tmp.value());
   }
-  tmp.value() = std::move(task);
+  tmp = {std::move(task), ts_queue::TS_RACE};
   return tmp;
 }
 

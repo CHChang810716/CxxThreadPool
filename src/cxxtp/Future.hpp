@@ -11,7 +11,6 @@
 #include "cxxtp/SchedCoroClient.hpp"
 #include "cxxtp/Scheduler.hpp"
 #include "cxxtp/Task.hpp"
-#include "cxxtp/Worker.hpp"
 
 namespace cxxtp {
 

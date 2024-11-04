@@ -18,14 +18,14 @@
 #include "cxxtp/TSQueue.hpp"
 #include "cxxtp/Task.hpp"
 #include "cxxtp/Timer.hpp"
-#include "cxxtp/Worker.hpp"
+#include "cxxtp/MultiQWorker.hpp"
 #include "cxxtp/ts_queue/LockQueue.hpp"
 #include "cxxtp/ts_queue/Status.hpp"
 #include "cxxtp/ts_queue/TryLockQueue.hpp"
 
 namespace cxxtp {
 
-class Scheduler : public Worker {
+class Scheduler : public MultiQWorker {
 
  public:
   Scheduler(unsigned numThreads);
@@ -99,20 +99,21 @@ class Scheduler : public Worker {
   void printStatus();
 
  private:
-  using WorkerMap = std::map<std::thread::id, Worker*>;
-  using WorkerIter = WorkerMap::iterator;
+  using MultiQWorkerMap = std::map<std::thread::id, MultiQWorker*>;
+  using MultiQWorkerIter = MultiQWorkerMap::iterator;
   void _schedulerOnce();
   void _submitToNextWorker(Task&& task, bool schedulerIsWorker);
   TaskTransRes _trySubmitToNextWorker(Task&& task, bool schedulerIsWorker);
   void _allocSuspendedTasksToWorkers();
   void _submitToSelf(Task&& task);
   TaskTransRes _trySubmitToSelf(Task&& task);
-  Worker* _getNextWorker();
-  Worker* _getNextWorker(bool skipScheduler);
-  WorkerMap _workers;
+  MultiQWorker* _getNextWorker();
+  MultiQWorker* _getNextWorker(bool skipScheduler);
+  SuspendQueues _suspendedQueues;
+  MultiQWorkerMap _workers;
   std::vector<std::thread> _threads;
   ContextList _liveContexts;
-  WorkerIter _nextWorker;
+  MultiQWorkerIter _nextWorker;
 };
 
 using CoSchedApi = SchedCoroClient<Scheduler>;

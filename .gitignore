@@ -35,3 +35,5 @@ build/
 stage/
 .vscode/
 *build/
+
+.cache

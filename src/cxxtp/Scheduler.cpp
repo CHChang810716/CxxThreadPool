@@ -22,7 +22,7 @@ Scheduler::Scheduler(unsigned numThreads)
   _tid = std::this_thread::get_id();
   _workers[getThreadId()] = this;
   this->_suspended = &_suspendedQueues[numThreads - 1];
-  this->_stealIt.reset(_suspendedQueues, numThreads - 1);
+  this->_initStealItr(numThreads - 1, _suspendedQueues);
   _nextWorker = _workers.begin();
 }
 

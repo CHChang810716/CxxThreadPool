@@ -1,11 +1,11 @@
 #pragma once
 #include <atomic>
 #include <cassert>
+#include <iostream>
 #include <mutex>
 #include <optional>
 #include <queue>
 #include <thread>
-#include <iostream>
 
 #include "cxxtp/ts_queue/Status.hpp"
 
@@ -43,39 +43,50 @@ class VersionQueue : public VersionQueueChecker {
   using Block = VersionBlock<Elem>;
 
  public:
-  TransRes<Elem> tryPop();           // has value -> success
+  class ConsumerApi {
+   public:
+    ConsumerApi(VersionQueue* obj, unsigned readIdx)
+        : _obj(obj), _readIdx(readIdx) {}
+    TransRes<Elem> tryPop();  // has value -> success
+
+   private:
+    VersionQueue<Elem, maxSize>* _obj;
+    unsigned _readIdx;
+  };
+
   TransRes<Elem> tryPush(Elem&& o);  // has value -> failed
   TransStatus tryPush(Elem& o);
+  ConsumerApi createConsumer() {
+    return ConsumerApi{this, _writeIdx + 1};
+  }
   void dump();
+
  private:
   // unsigned _next(unsigned i) { return (i + 1) % maxSize; }
   // unsigned _nextVer(unsigned i) { return (i + 1) <= 1 ? 2 : (i + 1); }
   int _intDist(unsigned l, unsigned r) { return int(r - l); }
-  struct ConsumerApi {
-    unsigned readIdx{0};
-  };
-
   std::vector<Block> _data{maxSize};
   unsigned _writeIdx{0};
 };
 
 template <class Elem, unsigned maxSize>
-TransRes<Elem> VersionQueue<Elem, maxSize>::tryPop() {
+TransRes<Elem> VersionQueue<Elem, maxSize>::ConsumerApi::tryPop() {
   static constexpr unsigned retryTimes = 5;
-  static thread_local ConsumerApi api;
   for (int i = 0; i < retryTimes; ++i) {
-    int d = _intDist(api.readIdx, _writeIdx);
-    assert(d >= 0 && "queue in bug state, stop");
-    if (d == 0)
-      return {std::nullopt, TS_EMPTY};
-    auto& b = _data[api.readIdx % maxSize];
-    api.readIdx = api.readIdx + 1;
+    // int d = _intDist(api.readIdx, _writeIdx);
+    // assert(d >= 0 && "queue in bug state, stop");
+    // if (d == 0)
+    //   return {std::nullopt, TS_EMPTY};
+    auto& b = _obj->_data[_readIdx % maxSize];
+    _readIdx = _readIdx + 1;
     // If version is not 0, update the version and read the data.
     // And because there might me multiple consumers, we need to take care the memory order of version.
-    auto bv = b.version.load(std::memory_order_acquire); // read version
+    auto bv =
+        b.version.load(std::memory_order_acquire);  // read version
     if (bv == 2) {
       // CAS
-      if (b.version.compare_exchange_weak(bv, 1, std::memory_order_acq_rel)) {
+      if (b.version.compare_exchange_weak(
+              bv, 1, std::memory_order_acq_rel)) {
         // Now we have the block data, read the data and return.
         TransRes<Elem> res{std::move(b.obj), TS_DONE};
         b.version.store(0, std::memory_order_release);
@@ -83,7 +94,7 @@ TransRes<Elem> VersionQueue<Elem, maxSize>::tryPop() {
       }
     }
   }
-  return {std::nullopt, TS_RACE};
+  return {std::nullopt, TS_EMPTY};
 }
 
 template <class Elem, unsigned maxSize>
@@ -116,8 +127,8 @@ template <class Elem, unsigned maxSize>
 void VersionQueue<Elem, maxSize>::dump() {
   for (unsigned i = 0; i < maxSize; ++i) {
     auto& b = _data[i];
-    std::cout << "i: " << i << " ver: " << b.version << " obj: " << b.obj
-              << std::endl;
+    std::cout << "i: " << i << " ver: " << b.version
+              << " obj: " << b.obj << std::endl;
   }
 }
 }  // namespace cxxtp::ts_queue

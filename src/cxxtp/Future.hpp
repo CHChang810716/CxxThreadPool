@@ -37,6 +37,7 @@ struct PromiseBase<void> {
 template <class T, SchedulerProxy SP = CoSchedApi>
 class Future {
  public:
+  using SchedApi = SP;
   using ValueType = T;
   struct promise_type : public PromiseBase<T> {
     // TODO: operator new for memory efficiency
@@ -118,3 +119,4 @@ class Future {
 };
 
 }  // namespace cxxtp
+

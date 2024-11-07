@@ -26,7 +26,8 @@ class MultiQWorker {
   using ReadyQueue = ts_queue::CircularQueue<Task, MAX_WORKER_TASKS>;
   using SuspendQueue = ts_queue::VersionQueue<Task, MAX_WORKER_TASKS>;
   using SuspendQueues = std::vector<SuspendQueue>;
-  using StealQueues = SuspendQueues;
+  using StealQueue = SuspendQueue::ConsumerApi;
+  using StealQueues = std::vector<StealQueue>;
 
  private:
   struct StealIterator {
@@ -38,17 +39,19 @@ class MultiQWorker {
     void reset(StealQueues& qs, unsigned skipId) {
       assert(skipId < qs.size());
       _qs = &qs;
-      _it = _qs->begin() + skipId + 1;
-      if (_it == _qs->end())
-        _it = _qs->begin();
-      _skipIt = _qs->begin() + skipId;
+      _it = _qs->begin() + skipId;
+      // if (_it == _qs->end())
+      //   _it = _qs->begin();
+      // _skipIt = _qs->begin() + skipId;
     }
     StealIterator& operator++() {
       ++_it;
-      if (_it == _skipIt)
-        ++_it;
+      // if (_it == _skipIt)
+      //   ++_it;
       if (_it == _qs->end())
         _it = _qs->begin();
+      // if (_it == _skipIt)
+      //   ++_it;
       return *this;
     }
     StealIterator operator++(int) {
@@ -59,7 +62,10 @@ class MultiQWorker {
     StealQueues::value_type& operator*() { return *_it; }
     StealQueues::value_type* operator->() { return &*_it; }
     operator bool() const {
-      return _it != _qs->end() && _it != _skipIt;
+      bool isEnd = _it == _qs->end();
+      // bool isSkip = _it == _skipIt;
+      // return !isEnd && !isSkip;
+      return !isEnd;
     }
 
    private:
@@ -74,7 +80,7 @@ class MultiQWorker {
   explicit MultiQWorker(unsigned qid, SuspendQueues& qs);
 
   explicit MultiQWorker(std::thread& t, unsigned qid,
-                        std::vector<SuspendQueue>& qs);
+                        SuspendQueues& qs);
 
   void submit(Task&& t);
 
@@ -88,6 +94,8 @@ class MultiQWorker {
 
  protected:
   void _defaultLoop();
+
+  void _initStealItr(unsigned qid, std::vector<SuspendQueue>& qs);
 
   template <class Submitter>
   void _defaultWork(Submitter& s) {
@@ -131,9 +139,11 @@ class MultiQWorker {
   ReadyQueue _ready{};
 
   /// worker thread in master thread out
-  SuspendQueue* _suspended;
+  SuspendQueue* _suspended {nullptr};
 
-  std::thread* _thread;
+  std::thread* _thread {nullptr};
+
+  StealQueues _stealCands;
 
   StealIterator _stealIt;
 

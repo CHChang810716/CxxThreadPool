@@ -9,6 +9,7 @@
 #include <thread>
 
 #include "cxxtp/Future.hpp"
+#include "cxxtp/Profiler.hpp"
 #include "cxxtp/Scheduler.hpp"
 
 using namespace std::chrono_literals;
@@ -52,8 +53,11 @@ TEST(Scheduler, basic_test) {
     flag = true;
     co_return;
   });
+  cxxtp::Profiler prof(2);
+  sched.async(prof.make());
   sched.await(all);
   EXPECT_TRUE(flag);
+  prof.print(std::cout);
 }
 
 TEST(Scheduler, yield_test) {
@@ -121,9 +125,20 @@ TEST(Scheduler, block_test) {
     flag = true;
     co_return;
   });
+  std::map<std::thread::id, unsigned> schedTimes;
+  sched.async([&](auto sched) -> cxxtp::Future<void> {
+    while (true) {
+      auto id = std::this_thread::get_id();
+      schedTimes[id]++;
+      co_await sched.suspendFor(5ms);
+    }
+  });
   sched.await(all);
   EXPECT_TRUE(flag);
-
+  for (auto& [k, v] : schedTimes) {
+    std::cout << "thread: " << std::hex << k << std::dec
+              << " times: " << v << std::endl;
+  }
   auto du = std::chrono::steady_clock::now() - start;
   EXPECT_TRUE(du > 5s);
   EXPECT_TRUE(du < 6s);
@@ -169,7 +184,8 @@ TEST(Scheduler, recursive_await_test) {
 using Data = std::vector<unsigned>;
 using DIter = Data::iterator;
 
-cxxtp::Future<void> parallelSort(cxxtp::CoSchedApi sched, DIter beg, DIter end) {
+cxxtp::Future<void> parallelSort(cxxtp::CoSchedApi sched, DIter beg,
+                                 DIter end) {
   using namespace std;
 
   static constexpr unsigned ST_BOUND = 20 * 1000;
@@ -199,12 +215,14 @@ cxxtp::Future<void> parallelSort(cxxtp::CoSchedApi sched, DIter beg, DIter end) 
       break;
   }
 
-  auto lfut = sched.async([beg, left](auto sched) -> cxxtp::Future<void> {
-    return parallelSort(sched, beg, left);
-  });
-  auto rfut = sched.async([left, end](auto sched) -> cxxtp::Future<void> {
-    return parallelSort(sched, left, end);
-  });
+  auto lfut =
+      sched.async([beg, left](auto sched) -> cxxtp::Future<void> {
+        return parallelSort(sched, beg, left);
+      });
+  auto rfut =
+      sched.async([left, end](auto sched) -> cxxtp::Future<void> {
+        return parallelSort(sched, left, end);
+      });
   co_await lfut;
   co_await rfut;
 }

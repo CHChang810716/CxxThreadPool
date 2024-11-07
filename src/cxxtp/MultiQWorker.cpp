@@ -13,7 +13,11 @@ MultiQWorker::MultiQWorker(unsigned qid,
       _ready(),
       _suspended(&qs[qid]),
       _thread(nullptr),
-      _stealIt(qs, qid) {}
+      _stealCands(),
+      _stealIt() {
+
+  _initStealItr(qid, qs);
+}
 
 MultiQWorker::MultiQWorker(std::thread& t, unsigned qid,
                            std::vector<SuspendQueue>& qs)
@@ -22,10 +26,21 @@ MultiQWorker::MultiQWorker(std::thread& t, unsigned qid,
       _ready(),
       _suspended(&qs[qid]),
       _thread(nullptr),
-      _stealIt(qs, qid) {
+      _stealCands(),
+      _stealIt() {
+  _initStealItr(qid, qs);
   t = std::thread([this]() { _defaultLoop(); });
   _tid = t.get_id();
   _thread = &t;
+}
+
+void MultiQWorker::_initStealItr(unsigned qid,
+                                 std::vector<SuspendQueue>& qs) {
+  assert(_stealCands.empty());
+  for (auto& sq : qs) {
+    _stealCands.push_back(sq.createConsumer());
+  }
+  _stealIt.reset(_stealCands, qid);
 }
 
 void MultiQWorker::_defaultLoop() {

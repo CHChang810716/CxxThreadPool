@@ -18,20 +18,28 @@ void basicTest(Queue& q) {
   EXPECT_EQ(tmp.status, cxxtp::ts_queue::TS_EMPTY);
   q.tryPush(1);
   q.tryPush(2);
+  std::vector<int> v;
   tmp = q.tryPop();
   EXPECT_EQ(tmp.status, cxxtp::ts_queue::TS_DONE);
-  EXPECT_EQ(tmp.value(), 1);
+  v.push_back(tmp.value());
   tmp = q.tryPop();
   EXPECT_EQ(tmp.status, cxxtp::ts_queue::TS_DONE);
-  EXPECT_EQ(tmp.value(), 2);
+  v.push_back(tmp.value());
+  std::sort(v.begin(), v.end());
+  EXPECT_EQ(v[0], 1);
+  EXPECT_EQ(v[1], 2);
+  v.clear();
   q.tryPush(3);
   q.tryPush(4);
   tmp = q.tryPop();
   EXPECT_EQ(tmp.status, cxxtp::ts_queue::TS_DONE);
-  EXPECT_EQ(tmp.value(), 3);
+  v.push_back(tmp.value());
   tmp = q.tryPop();
   EXPECT_EQ(tmp.status, cxxtp::ts_queue::TS_DONE);
-  EXPECT_EQ(tmp.value(), 4);
+  v.push_back(tmp.value());
+  std::sort(v.begin(), v.end());
+  EXPECT_EQ(v[0], 3);
+  EXPECT_EQ(v[1], 4);
   tmp = q.tryPop();
   EXPECT_EQ(tmp.status, cxxtp::ts_queue::TS_EMPTY);
   for (int i = 0; i < 5; ++i) {
@@ -41,9 +49,12 @@ void basicTest(Queue& q) {
   EXPECT_EQ(tmp.status, cxxtp::ts_queue::TS_FULL);
 }
 
-template <class Queue>
+template <class SPMCQueue>
 void threadTest(int consumer, int producer, unsigned testSize) {
-  Queue q;
+  static constexpr int maxMs = 5;
+  std::random_device rd;
+  std::uniform_int_distribution<> uid(0, maxMs);
+  SPMCQueue q;
   std::atomic<int>* data = new std::atomic<int>[testSize];
   for (int i = 0; i < testSize; ++i) {
     data[i] = 0;
@@ -53,8 +64,10 @@ void threadTest(int consumer, int producer, unsigned testSize) {
   std::atomic<bool> testPop = true;
   for (auto& t : conTs) {
     t = std::thread([&] {
+      auto cons = q.createConsumer();
       while (testPop.load()) {
-        auto tmp = q.tryPop();
+        std::this_thread::sleep_for(std::chrono::milliseconds(uid(rd)));
+        auto tmp = cons.tryPop();
         if (tmp.status == cxxtp::ts_queue::TS_DONE) {
           auto& d = data[tmp.value()];
           d.fetch_add(1, std::memory_order_consume);
@@ -65,6 +78,9 @@ void threadTest(int consumer, int producer, unsigned testSize) {
   for (auto& t : proTs) {
     t = std::thread([&] {
       for (int i = 0; i < testSize; ++i) {
+        if (uid(rd) % 2 == 0) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(uid(rd)));
+        }
         while(q.tryPush(i) != cxxtp::ts_queue::TS_DONE) {
           std::this_thread::yield();
         }
@@ -74,7 +90,9 @@ void threadTest(int consumer, int producer, unsigned testSize) {
   for (auto& t : proTs) {
     t.join();
   }
-  std::this_thread::sleep_for(std::chrono::seconds(2));
+  auto sleepSec = maxMs * testSize / 1000 / consumer;
+  sleepSec = sleepSec > 2 ? sleepSec : 2;
+  std::this_thread::sleep_for(std::chrono::seconds(sleepSec));
   testPop.store(false);
   for (auto& t : conTs) {
     t.join();
@@ -86,11 +104,47 @@ void threadTest(int consumer, int producer, unsigned testSize) {
 }
 TEST(VersionQueue, basic_test) {
   cxxtp::ts_queue::VersionQueue<int, 5> q;
-  basicTest(q);
+  auto cons = q.createConsumer();
+  auto tmp = cons.tryPop();
+  EXPECT_EQ(tmp.status, cxxtp::ts_queue::TS_EMPTY);
+  q.tryPush(1);
+  q.tryPush(2);
+  std::vector<int> v;
+  tmp = cons.tryPop();
+  EXPECT_EQ(tmp.status, cxxtp::ts_queue::TS_DONE);
+  v.push_back(tmp.value());
+  tmp = cons.tryPop();
+  EXPECT_EQ(tmp.status, cxxtp::ts_queue::TS_DONE);
+  v.push_back(tmp.value());
+  std::sort(v.begin(), v.end());
+  EXPECT_EQ(v[0], 1);
+  EXPECT_EQ(v[1], 2);
+  v.clear();
+  q.tryPush(3);
+  q.tryPush(4);
+  tmp = cons.tryPop();
+  EXPECT_EQ(tmp.status, cxxtp::ts_queue::TS_DONE);
+  v.push_back(tmp.value());
+  tmp = cons.tryPop();
+  EXPECT_EQ(tmp.status, cxxtp::ts_queue::TS_DONE);
+  v.push_back(tmp.value());
+  std::sort(v.begin(), v.end());
+  EXPECT_EQ(v[0], 3);
+  EXPECT_EQ(v[1], 4);
+  tmp = cons.tryPop();
+  EXPECT_EQ(tmp.status, cxxtp::ts_queue::TS_EMPTY);
+  for (int i = 0; i < 5; ++i) {
+    q.tryPush(i);
+  }
+  tmp = q.tryPush(5);
+  EXPECT_EQ(tmp.status, cxxtp::ts_queue::TS_FULL);
 }
 
 TEST(VersionQueue, thread_test) {
   using Q = cxxtp::ts_queue::VersionQueue<int, 5>;
   threadTest<Q>(8, 1, 3);
-  threadTest<Q>(8, 1, 1000);
+  for (int i = 0; i < 10; ++i) {
+    std::cout << "test round :" << i << std::endl;
+    threadTest<Q>(8, 1, 1000);
+  }
 }

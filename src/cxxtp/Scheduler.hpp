@@ -1,136 +1,121 @@
 #pragma once
 #include <cassert>
+#include <chrono>
+#include <coroutine>
 #include <future>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <queue>
+#include <stdexcept>
+#include <thread>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
-// #include "cxxtp/FutureSet.hpp"
+#include "cxxtp/ContextList.hpp"
+#include "cxxtp/SchedCoroClient.hpp"
 #include "cxxtp/TSQueue.hpp"
 #include "cxxtp/Task.hpp"
-#include "cxxtp/Worker.hpp"
+#include "cxxtp/Timer.hpp"
+#include "cxxtp/MultiQWorker.hpp"
+#include "cxxtp/ts_queue/LockQueue.hpp"
+#include "cxxtp/ts_queue/Status.hpp"
+#include "cxxtp/ts_queue/TryLockQueue.hpp"
 
 namespace cxxtp {
-class Scheduler {
+
+class Scheduler : public MultiQWorker {
+
  public:
   Scheduler(unsigned numThreads);
   ~Scheduler();
-  template <class Func>
-  auto async(Func &&f) {
-    std::lock_guard<std::mutex> lock(_mux);
-    using Res = decltype(f(*this));
-    using Promise = std::promise<Res>;
-    using PromisePtr = std::shared_ptr<Promise>;
-    PromisePtr p(new Promise());
-    auto fut = p->get_future();
-    Task task = [this, p, ff{std::move(f)}]() {
-      if constexpr (std::is_void_v<Res>) {
-        ff(*this);
-        p->set_value();
+
+  template <class FuncCtx, class... Args>
+  auto async(FuncCtx&& fctx, Args&&... args) {
+    // 0-0. the return type of f should be coroutine
+    // 0-1. the promise of coroutine type should have constructor to
+    // capture the Scheduler
+    // 1. put the f to a list member of Scheduler
+    // 2. call the f from the list, a coroutine object returned -> co
+    // 3. put co to queue
+    // 4. in worker, pop queue and call co.resume()
+    auto fut = [&]() {
+      if constexpr (std::is_function_v<
+                        std::remove_cvref_t<FuncCtx>> ||
+                    std::is_lvalue_reference_v<FuncCtx>) {
+        SchedCoroClient agent(this);
+        return fctx(agent, std::forward<Args>(args)...);
       } else {
-        p->set_value(ff(*this));
+        auto pfctx =
+            _liveContexts.append(std::forward<FuncCtx>(fctx));
+        SchedCoroClient agent(this, pfctx);
+        return pfctx->operator()(
+            agent, std::forward<Args>(args)...);  // *this -> agent
       }
-    };
-    if (std::this_thread::get_id() == _mainId) {
-      while (!_tryAllocBufTaskToNextWorker(task))
-        ;
-    } else {
-      _buffer.emplace(std::move(task));
-    }
+    }();
+    std::coroutine_handle<> coro = fut.getCoroutineHandle();
+    submit(std::move(coro));
     return fut;
   }
 
-  template <class T>
-  auto await(std::future<T> &fut) {
-    _only_await(fut);
-    return fut.get();
-  }
-
-  void yield() {
+  template <class Fut>
+  decltype(auto) await(Fut& fut) {
     auto myid = std::this_thread::get_id();
-    auto iter = _workers.find(myid);
-    if (iter == _workers.end()) {
-      if (_mainId == myid) {
-        _schedulerOnce();
-      }
-    } else {
-      iter->second->_workerOnce();
+    if (myid != this->getThreadId()) {
+      throw std::runtime_error(
+          "The scheduler await could only called from main thread "
+          "and none coroutine context");
+    }
+    while (!fut.await_ready()) {
+      _schedulerOnce();
+    }
+    if constexpr (!std::is_void_v<typename Fut::ValueType>) {
+      return fut.await_resume();
     }
   }
 
   template <class... DuArgs>
-  void yield_for(std::chrono::duration<DuArgs...> du) {
-    auto start = std::chrono::steady_clock::now();
-    while ((start + du) > std::chrono::steady_clock::now()) {
-      yield();
+  auto suspendFor(std::chrono::duration<DuArgs...> du) {
+    using namespace std::chrono_literals;
+    auto dutime = std::chrono::steady_clock::now() + du;
+    return Timer(this, dutime);
+  }
+
+  void submit(Task&& t) {
+    if (std::this_thread::get_id() == getThreadId()) {
+      _submitToNextWorker(std::move(t), true);
+    } else {
+      auto& w = _workers[std::this_thread::get_id()];
+      w->submit(std::move(t));
     }
   }
 
-  // template <class T>
-  // std::list<T> await(FutureSet<T> &futSet) {
-  //   std::list<T> res;
-  //   auto &futs = futSet._data;
-  //   for (; !futs.empty(); futs.pop_front()) {
-  //     auto &fut = futs.front();
-  //     _only_await(fut);
-  //     res.push_back(fut.get());
-  //   }
-  //   return res;
-  // }
-
-  // void await(FutureSet<void> &futSet);
-
-  // template <class... T>
-  // std::tuple<T...> await(FutureTuple<T...> &futSet) {
-  //   return std::apply(
-  //       [&](auto &... fut) { return std::make_tuple(await(fut)...); },
-  //       futSet);
-  // }
-
-  unsigned getNumPendingTasks() const {
-    return _selfTasks.size() + _numStackLevel;
+  template <class FuncCtx>
+  void deleteFuncCtx(FuncCtx* ptr) {
+    _liveContexts.remove(ptr);
   }
+
+  void printStatus();
 
  private:
-  template <class T>
-  void _only_await(std::future<T> &fut) {
-    auto myid = std::this_thread::get_id();
-    auto iter = _workers.find(myid);
-    auto isFutReady = [&]() {
-      return fut.wait_for(std::chrono::seconds(0)) ==
-                 std::future_status::ready ||
-             !fut.valid();
-    };
-    if (iter == _workers.end()) {
-      if (_mainId == myid) {
-        while (!isFutReady()) {
-          _schedulerOnce();
-        }
-        assert(fut.valid());
-      } else {
-        fut.wait();
-      }
-    } else {
-      while (!isFutReady()) {
-        iter->second->_workerOnce();
-      }
-      assert(fut.valid());
-    }
-  }
-  using WorkerMap = std::map<std::thread::id, Worker *>;
-  bool _tryAllocTasksToWorkers();
+  using MultiQWorkerMap = std::map<std::thread::id, MultiQWorker*>;
+  using MultiQWorkerIter = MultiQWorkerMap::iterator;
   void _schedulerOnce();
-  Worker *_getNextWorker();
-  bool _tryAllocBufTaskToNextWorker(Task &task);
-  WorkerMap _workers;
-  std::mutex _mux;
-  std::queue<Task> _buffer;
-  TSQueue<Task, MAX_WORKER_TASKS> _selfTasks;
-  std::thread::id _mainId;
-  WorkerMap::iterator _nextAllocWorker;
-  unsigned _numStackLevel;
+  void _submitToNextWorker(Task&& task, bool schedulerIsWorker);
+  TaskTransRes _trySubmitToNextWorker(Task&& task, bool schedulerIsWorker);
+  void _allocSuspendedTasksToWorkers();
+  void _submitToSelf(Task&& task);
+  TaskTransRes _trySubmitToSelf(Task&& task);
+  MultiQWorker* _getNextWorker();
+  MultiQWorker* _getNextWorker(bool skipScheduler);
+  SuspendQueues _suspendedQueues;
+  MultiQWorkerMap _workers;
+  std::vector<std::thread> _threads;
+  ContextList _liveContexts;
+  MultiQWorkerIter _nextWorker;
 };
+
+using CoSchedApi = SchedCoroClient<Scheduler>;
 
 }  // namespace cxxtp

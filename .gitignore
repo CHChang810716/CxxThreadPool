@@ -35,5 +35,4 @@ build/
 stage/
 .vscode/
 *build/
-
-.cache
+.cache/

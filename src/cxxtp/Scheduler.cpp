@@ -1,101 +1,132 @@
 #include "cxxtp/Scheduler.hpp"
 
+#include <chrono>
+#include <iostream>
 #include <mutex>
+#include "cxxtp/MultiQWorker.hpp"
+#include "cxxtp/Task.hpp"
+#include "cxxtp/ts_queue/Status.hpp"
 namespace cxxtp {
 
 Scheduler::Scheduler(unsigned numThreads)
-    : _workers(),
-      _mux(),
-      _buffer(),
-      _selfTasks(),
-      _mainId(std::this_thread::get_id()),
-      _nextAllocWorker(),
-      _numStackLevel(0) {
-  for (unsigned i = 0; i < numThreads - 1; ++i) {
-    Worker *worker = new Worker(*this);
+    : _suspendedQueues(numThreads),
+      _workers(),
+      _threads(),
+      _liveContexts(),
+      _nextWorker() {
+  _threads.resize(numThreads - 1);
+  for (unsigned i = 0; i < _threads.size(); ++i) {
+    MultiQWorker* worker = new MultiQWorker(_threads[i], i, _suspendedQueues);
     _workers[worker->getThreadId()] = worker;
   }
-  _nextAllocWorker = _workers.begin();
-}
-
-Worker *Scheduler::_getNextWorker() {
-  assert(_mainId == std::this_thread::get_id());
-  if (_nextAllocWorker == _workers.end()) {
-    _nextAllocWorker = _workers.begin();
-    return nullptr;
-  }
-  auto res = _nextAllocWorker->second;
-  _nextAllocWorker++;
-  return res;
-}
-
-bool Scheduler::_tryAllocBufTaskToNextWorker(Task &task) {
-  Worker *minTasksWorker = nullptr;
-  // Try assign task to the most leisurely worker.
-  for (auto &[tid, worker] : _workers) {
-    if (!minTasksWorker) {
-      minTasksWorker = worker;
-      continue;
-    }
-    minTasksWorker =
-        worker->getNumPendingTasks() < minTasksWorker->getNumPendingTasks()
-            ? worker
-            : minTasksWorker;
-  }
-  if (minTasksWorker && minTasksWorker->getNumPendingTasks() < getNumPendingTasks()) {
-    if (minTasksWorker->trySubmit(task))
-      return true;
-  } else {
-    if (_selfTasks.tryPush(task))
-      return true;
-  }
-  // Failed, try to find any workable worker.
-  for (unsigned i = 0; i < _workers.size() + 1; ++i) {
-    Worker *selected = _getNextWorker();
-    if (selected) {
-      if (selected->trySubmit(task))
-        return true;
-      else
-        continue;
-    } else {
-      if (_selfTasks.tryPush(task))
-        return true;
-      else
-        continue;
-    }
-  }
-  return false;
-}
-
-bool Scheduler::_tryAllocTasksToWorkers() {
-  assert(_mainId == std::this_thread::get_id());
-  std::unique_lock<std::mutex> lock(_mux, std::try_to_lock);
-  if (!lock.owns_lock()) return false;
-  while (!_buffer.empty()) {
-    auto &task = _buffer.front();
-    if (_tryAllocBufTaskToNextWorker(task)) {
-      _buffer.pop();
-      continue;
-    }
-    return false;
-  }
-  return true;
-}
-
-void Scheduler::_schedulerOnce() {
-  assert(_mainId == std::this_thread::get_id());
-  _tryAllocTasksToWorkers();
-  if (auto task = _selfTasks.tryPop(); task.has_value()) {
-    ++_numStackLevel;
-    task.value()();
-    --_numStackLevel;
-  }
+  _tid = std::this_thread::get_id();
+  _workers[getThreadId()] = this;
+  this->_suspended = &_suspendedQueues[numThreads - 1];
+  this->_initStealItr(numThreads - 1, _suspendedQueues);
+  _nextWorker = _workers.begin();
 }
 
 Scheduler::~Scheduler() {
-  for (auto &[id, worker] : _workers) {
+  for (auto& [id, worker] : _workers) {
     worker->detach();
-    delete worker;
+    if (worker != this)
+      delete worker;
+  }
+}
+
+void Scheduler::_submitToSelf(Task&& task) {
+  if (auto trans = _ready.tryPush(std::move(task));
+      trans.has_value()) {
+    _pending.push(std::move(trans.value()));
+  }
+}
+
+TaskTransRes Scheduler::_trySubmitToSelf(Task&& task) {
+  return _ready.tryPush(std::move(task));
+}
+
+void Scheduler::_submitToNextWorker(Task&& task,
+                                    bool schedulerIsWorker) {
+  auto* worker = _getNextWorker(!schedulerIsWorker);
+  if (worker == this)
+    _submitToSelf(std::move(task));
+  else
+    worker->submit(std::move(task));
+}
+
+TaskTransRes Scheduler::_trySubmitToNextWorker(
+    Task&& task, bool schedulerIsWorker) {
+
+  auto tryTimes = _workers.size() - !schedulerIsWorker;
+  TaskTransRes tmp;
+  for (unsigned i = 0; i < tryTimes; ++i) {
+    auto* worker = _getNextWorker(!schedulerIsWorker);
+    if (worker == this)
+      tmp = _trySubmitToSelf(std::move(task));
+    else
+      tmp = worker->trySubmit(std::move(task));
+    if (!tmp.has_value())
+      return tmp;
+    task = std::move(tmp.value());
+  }
+  tmp = {std::move(task), ts_queue::TS_RACE};
+  return tmp;
+}
+
+void Scheduler::_allocSuspendedTasksToWorkers() {
+  // assert(getThreadId() == std::this_thread::get_id());
+  // for (auto& [id, worker] : _workers) {
+  //   auto num = worker->_suspended.size();
+  //   for (unsigned i = 0; i < num; ++i) {
+  //     auto task = worker->_suspended.tryPop();
+  //     if (!task.has_value())
+  //       break;
+  //     task = _trySubmitToNextWorker(std::move(task.value()), true);
+  //     // printStatus();
+  //     if (task.has_value()) {  // all worker full
+  //       _pending.push(std::move(task.value()));
+  //       return;
+  //     }
+  //   }
+  // }
+}
+
+void Scheduler::_schedulerOnce() {
+  assert(getThreadId() == std::this_thread::get_id());
+  _allocSuspendedTasksToWorkers();
+  _defaultWork(*this);
+}
+
+MultiQWorker* Scheduler::_getNextWorker() {
+  auto res = _nextWorker;
+  _nextWorker++;
+  if (_nextWorker == _workers.end()) {
+    _nextWorker = _workers.begin();
+  }
+  return res->second;
+}
+
+MultiQWorker* Scheduler::_getNextWorker(bool skipScheduler) {
+  auto* worker = _getNextWorker();
+  if (worker == this && skipScheduler) {
+    worker = _getNextWorker();
+  }
+  return worker;
+}
+
+static std::mutex mux;
+void Scheduler::printStatus() {
+  std::lock_guard<std::mutex> loc(mux);
+  std::cout
+      << "timestamp: "
+      << std::chrono::steady_clock::now().time_since_epoch().count()
+      << std::endl;
+  for (auto& [id, pw] : _workers) {
+    std::cout << "  [" << std::hex << id << std::dec
+              << "]: " << std::endl;
+    std::cout << "    ready:     " << pw->_ready.size() << std::endl;
+    // std::cout << "    suspended: " << pw->_suspended->size()
+    //           << std::endl;
   }
 }
 }  // namespace cxxtp

@@ -1,34 +1,59 @@
 #include "cxxtp/Worker.hpp"
-
-#include "cxxtp/Scheduler.hpp"
+#include <atomic>
+#include <cassert>
+#include <thread>
+#include "cxxtp/Task.hpp"
+#include "cxxtp/ts_queue/Status.hpp"
 
 namespace cxxtp {
 
-Worker::Worker(Scheduler &sched)
-    : _enabled(false),
-      _queue(),
-      _scheduler(&sched),
-      _t(),
-      _numStaskTasks(0) {
-  _enabled.store(true);
-  _t = std::thread([this]() { _workerLoop(); });
+Worker::Worker()
+    : _tid(std::this_thread::get_id()),
+      _enabled(false),
+      _ready(),
+      _suspended(),
+      _thread(nullptr) {}
+
+Worker::Worker(std::thread& t)
+    : _tid(),
+      _enabled(true),
+      _ready(),
+      _suspended(),
+      _thread(nullptr) {
+  t = std::thread([this]() { _defaultLoop(); });
+  _tid = t.get_id();
+  _thread = &t;
 }
 
-bool Worker::trySubmit(Task &t) { return _queue.tryPush(t); }
-void Worker::_workerOnce() {
-  if (auto task = _queue.tryPop(); task.has_value()) {
-    ++_numStaskTasks;
-    task.value()();
-    --_numStaskTasks;
+void Worker::_defaultLoop() {
+  while (_enabled.load(std::memory_order_relaxed)) {
+    _defaultWork(*this);
   }
 }
-void Worker::_workerLoop() {
-  while (_enabled.load()) {
-    _workerOnce();
+
+void Worker::submit(Task&& t) {
+  assert(t);
+  TaskTransRes tmp = trySubmit(std::move(t));
+  if (tmp.status != ts_queue::TS_DONE) {
+    _pending.push(std::move(tmp.value()));
   }
 }
+
+TaskTransRes Worker::trySubmit(Task&& t) {
+  assert(t);
+  if (std::this_thread::get_id() == getThreadId()) {
+    return _suspended.tryPush(std::move(t));
+  } else {
+    return _ready.tryPush(std::move(t));
+  }
+}
+
 void Worker::detach() {
   _enabled.store(false);
-  _t.detach();
+  if (_thread)
+    _thread->detach();
 }
+
+thread_local std::queue<Task> Worker::_pending;
+
 }  // namespace cxxtp

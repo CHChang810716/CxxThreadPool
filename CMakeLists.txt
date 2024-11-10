@@ -15,7 +15,7 @@ HunterGate(
     SHA1 e4b63bce33600aefa2ddc6d10cdaabcdca916cf9
     FILEPATH ${CMAKE_CURRENT_LIST_DIR}/cmake/hunter_config.cmake
 )
-project(CppProjectTemplate
+project(CxxThreadPool
     LANGUAGES C CXX 
     VERSION 0.1.0.0
 )

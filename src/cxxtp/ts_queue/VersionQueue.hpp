@@ -46,7 +46,14 @@ class VersionQueue : public VersionQueueChecker {
   class ConsumerApi {
    public:
     ConsumerApi(VersionQueue* obj, unsigned readIdx)
-        : _obj(obj), _readIdx(readIdx) {}
+        : _obj(obj), _readIdx(readIdx) {
+      for (int i = 0; i < maxSize; ++i) {
+        if (_obj->_data[_readIdx % maxSize].version == 2) {
+          break;
+        }
+        _readIdx++;
+      }
+    }
     TransRes<Elem> tryPop();  // has value -> success
 
    private:
@@ -71,7 +78,7 @@ class VersionQueue : public VersionQueueChecker {
 
 template <class Elem, unsigned maxSize>
 TransRes<Elem> VersionQueue<Elem, maxSize>::ConsumerApi::tryPop() {
-  static constexpr unsigned retryTimes = 5;
+  static constexpr unsigned retryTimes = maxSize / 2;
   for (int i = 0; i < retryTimes; ++i) {
     // int d = _intDist(api.readIdx, _writeIdx);
     // assert(d >= 0 && "queue in bug state, stop");

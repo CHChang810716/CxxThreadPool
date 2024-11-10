@@ -69,7 +69,7 @@ TaskTransRes MultiQWorker::trySubmit(Task&& t) {
 void MultiQWorker::detach() {
   _enabled.store(false);
   if (_thread)
-    _thread->detach();
+    _thread->join();
 }
 
 thread_local std::queue<Task> MultiQWorker::_pending;

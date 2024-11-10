@@ -53,11 +53,9 @@ TEST(Scheduler, basic_test) {
     flag = true;
     co_return;
   });
-  cxxtp::Profiler prof(2);
-  sched.async(prof.make());
   sched.await(all);
   EXPECT_TRUE(flag);
-  prof.print(std::cout);
+  cxxtp::Profiler::print(std::cout); 
 }
 
 TEST(Scheduler, yield_test) {
@@ -101,6 +99,18 @@ TEST(Scheduler, yield_test) {
   });
   sched.await(all);
   EXPECT_TRUE(flag);
+  cxxtp::Profiler::print(std::cout); 
+}
+
+TEST(Scheduler, balance_test) {
+  cxxtp::Scheduler sched(4);
+  using Clock = std::chrono::steady_clock;
+  auto all = sched.async([](auto sched) -> cxxtp::Future<void> {
+    co_await sched.suspendFor(10s);
+    co_return;
+  });
+  sched.await(all);
+  cxxtp::Profiler::print(std::cout); 
 }
 
 TEST(Scheduler, block_test) {
@@ -142,7 +152,9 @@ TEST(Scheduler, block_test) {
   auto du = std::chrono::steady_clock::now() - start;
   EXPECT_TRUE(du > 5s);
   EXPECT_TRUE(du < 6s);
+  cxxtp::Profiler::print(std::cout); 
 }
+
 
 int fib(int n) {
   if (n < 2)
@@ -180,6 +192,7 @@ TEST(Scheduler, recursive_await_test) {
   EXPECT_EQ(mtRes, stRes);
   EXPECT_TRUE(duST * 0.25 <= duMT);
   EXPECT_TRUE(duST * 0.4 > duMT);
+  cxxtp::Profiler::print(std::cout); 
 }
 using Data = std::vector<unsigned>;
 using DIter = Data::iterator;
@@ -231,33 +244,36 @@ TEST(Scheduler, sorting_performance_test) {
   std::random_device rd;
   std::uniform_int_distribution<unsigned> dist(0);
   unsigned dataSize = 1000 * 1000 * 10;
-  Data data(dataSize);
-  for (auto& d : data) {
-    d = dist(rd);
-  }
-  auto start = std::chrono::steady_clock::now();
-  auto duST = start - start;
-  {
-    auto stData = data;
-    start = std::chrono::steady_clock::now();
-    std::sort(stData.begin(), stData.end());
-    duST = std::chrono::steady_clock::now() - start;
-  }
+  for (int i = 0; i < 10; ++i) {
+    Data data(dataSize);
+    for (auto& d : data) {
+      d = dist(rd);
+    }
+    auto start = std::chrono::steady_clock::now();
+    auto duST = start - start;
+    {
+      auto stData = data;
+      start = std::chrono::steady_clock::now();
+      std::sort(stData.begin(), stData.end());
+      duST = std::chrono::steady_clock::now() - start;
+    }
 
-  cxxtp::Scheduler sched(4);
-  auto duMT = std::chrono::steady_clock::now() - start;
-  {
-    start = std::chrono::steady_clock::now();
-    // parallelSort(sched, data.begin(), data.end());
-    auto fut = sched.async(parallelSort, data.begin(), data.end());
-    sched.await(fut);
-    duMT = std::chrono::steady_clock::now() - start;
+    cxxtp::Scheduler sched(4);
+    auto duMT = std::chrono::steady_clock::now() - start;
+    {
+      start = std::chrono::steady_clock::now();
+      // parallelSort(sched, data.begin(), data.end());
+      auto fut = sched.async(parallelSort, data.begin(), data.end());
+      sched.await(fut);
+      duMT = std::chrono::steady_clock::now() - start;
+    }
+    for (unsigned i = 1; i < data.size(); ++i) {
+      EXPECT_LE(data[i - 1], data[i]);
+    }
+    std::cout << duST.count() << std::endl;
+    std::cout << duMT.count() << std::endl;
+    EXPECT_TRUE(duST * 0.25 <= duMT);
+    EXPECT_TRUE(duST * 0.4 > duMT);
+    cxxtp::Profiler::print(std::cout); 
   }
-  for (unsigned i = 1; i < data.size(); ++i) {
-    EXPECT_LE(data[i - 1], data[i]);
-  }
-  std::cout << duST.count() << std::endl;
-  std::cout << duMT.count() << std::endl;
-  EXPECT_TRUE(duST * 0.25 <= duMT);
-  EXPECT_TRUE(duST * 0.4 > duMT);
 }

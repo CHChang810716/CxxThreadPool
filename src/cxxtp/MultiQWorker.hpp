@@ -5,6 +5,7 @@
 #include <optional>
 #include <thread>
 
+#include "cxxtp/Profiler.hpp"
 #include "cxxtp/TSQueue.hpp"
 #include "cxxtp/Task.hpp"
 #include "cxxtp/ts_queue/CircularQueue.hpp"
@@ -110,6 +111,7 @@ class MultiQWorker {
     };
     if (auto task = _ready.tryPop(); task.has_value()) {
       reschduleOnePending();
+      Profiler::workerRunTask();
       task.value()();
     } else if (!_pending.empty()) {
       auto& t = _pending.front();
@@ -120,7 +122,9 @@ class MultiQWorker {
       while (_stealIt) {
         if (auto task = _stealIt->tryPop(); task.has_value()) {
           reschduleOnePending();
+          Profiler::workerRunTask(true);
           task.value()();
+          ++_stealIt;
           break;
         }
         ++_stealIt;
@@ -139,9 +143,9 @@ class MultiQWorker {
   ReadyQueue _ready{};
 
   /// worker thread in master thread out
-  SuspendQueue* _suspended {nullptr};
+  SuspendQueue* _suspended{nullptr};
 
-  std::thread* _thread {nullptr};
+  std::thread* _thread{nullptr};
 
   StealQueues _stealCands;
 
